@@ -124,14 +124,81 @@ above instead.
 - `app.py` — Streamlit UI, data fetching, charts, and Forecasts section
 - `forecasting.py` — Black-Scholes, volatility estimation, and the four forecast
   implementations (Monte Carlo, candle patterns, ARIMA, Random Forest)
+- `cache.py` — disk-backed incremental OHLCV cache (parquet)
 - `requirements.txt` — pinned dependencies
+
+## Caching (rate-limit friendly)
+
+The app uses a **layered cache** so you don't hit Yahoo Finance on every
+interaction, plus an explicit user-controlled **"Fetch live data"** toggle so
+you can decide *when* (or whether) to call Yahoo Finance at all:
+
+| Layer | What it caches | TTL | Persists across restarts? | Incremental? |
+|---|---|---|---|---|
+| Streamlit memory | All fetches | 15 min – 24 h | No | No |
+| Disk parquet (`./.cache/`) | OHLCV history (option contract + underlying), option chains | until cleared | **Yes** | **OHLCV: yes — only the daily delta is fetched** |
+| Disk JSON (`./.cache/`) | Expirations lists | until cleared | **Yes** | Snapshot — refreshed when live mode is on |
+
+### "Fetch live data" toggle (sidebar)
+
+A checkbox at the top of the sidebar — labelled **"Fetch live data from Yahoo
+Finance"** — controls whether the app is allowed to make network calls.
+
+| Mode | Behavior | Use it when |
+|---|---|---|
+| **Cache-only** (default, unchecked) | Reads ONLY from `./.cache/`. **Zero** network calls. Returns whatever was cached on a previous run. Friendly warnings appear if a requested ticker/contract isn't cached yet. | You want the fastest possible UI, no rate-limit risk, and you trust the data is recent enough for what you're exploring. |
+| **Live** (checkbox checked) | Refreshes the disk cache: fetches the daily delta of OHLCV, re-pulls the expirations list and option chain. | You want the latest market data — typically once at the start of a session, then turn it back off. |
+
+The current data freshness is shown right below the contract metrics:
+
+> :package: Data updated: 2026-06-06 22:58 · Last bar: 2026-06-05 · Mode: **cache only**
+
+If you switch to live mode the badge turns green (:satellite:) and the
+timestamp updates as the cache is refreshed.
+
+### How the OHLCV disk cache works
+
+On first call for a symbol (with live mode ON), the app fetches a baseline
+(3 months for option contracts, 1 year for underlyings) and saves it as a
+parquet file in `./.cache/`. On subsequent live-mode calls, the cache is
+loaded from disk, the **last cached date is checked**, and yfinance is queried
+for **only the delta** (one or two new days, in most cases). If the cache is
+already up to date through the last business day, **no network call is made at
+all** — even in live mode.
+
+In cache-only mode the disk file is read directly and yfinance is never
+contacted, regardless of how stale the data is.
+
+This means:
+
+- After the first run, even live mode only sends a tiny incremental request per business day
+- The app stays responsive even offline — disk reads are <50 ms
+- Yahoo Finance is happy: total daily requests are O(distinct symbols), not
+  O(page interactions × distinct symbols)
+
+### Managing the cache
+
+In the sidebar, expand **"Cache settings"** to see:
+
+- The exact cache directory (`./.cache/` next to `app.py`)
+- The number of cached files and total size on disk
+- A list of **recently-updated cached symbols** with their last cache-write
+  timestamp and last bar date — so you can verify exactly how stale each
+  symbol's data is
+- A **"Clear all cached data"** button that wipes both the disk cache and the
+  Streamlit in-memory cache
+
+The cache directory is safe to delete at any time — the next fetch (in live
+mode) will rebuild it. Add `.cache/` to your `.gitignore` if you don't want
+to commit cached data.
 
 ## Notes & limitations
 
 - Some option contracts have no recent trading volume; in that case the history
   endpoint returns no rows and the app surfaces a friendly warning.
 - yfinance occasionally rate-limits or returns transient errors. If a fetch
-  fails, wait a few seconds and try again. Lookups are cached for 5 minutes.
+  fails, wait a few seconds and try again. The disk cache makes recovery much
+  faster — already-cached data continues to work even when fresh fetches fail.
 - Strikes must match exactly. If the strike you entered isn't listed for the
   contract, the app shows the nearest available strikes.
 - Forecasts use **constant volatility** (single-vol Black-Scholes). Real markets

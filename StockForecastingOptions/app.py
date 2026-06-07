@@ -26,11 +26,108 @@ import yfinance as yf
 from plotly.subplots import make_subplots
 
 import forecasting as fc
+import cache as fcache
 
 st.set_page_config(
     page_title="Options Lookup",
     page_icon="📈",
     layout="wide",
+)
+
+# --------------------------------------------------------------------------- #
+# Custom CSS — colorful tab styling
+# --------------------------------------------------------------------------- #
+st.markdown(
+    """
+    <style>
+    /* Tab list container — soft rounded background */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(127, 127, 127, 0.06);
+        border-radius: 14px !important;
+        padding: 6px !important;
+        gap: 6px !important;
+    }
+
+    /* Default tab styling */
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px !important;
+        padding: 0 24px !important;
+        height: 50px !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        border: 2px solid transparent !important;
+    }
+    .stTabs [data-baseweb="tab"] p {
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        margin: 0 !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    }
+
+    /* Hide BaseWeb's default underline indicator since we use bg colors */
+    .stTabs [data-baseweb="tab-highlight"] { display: none !important; }
+    .stTabs [data-baseweb="tab-border"]    { display: none !important; }
+
+    /* ---- Tab 1 — BLUE (Recent Activity / Monte Carlo sub-tab) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(1) {
+        background: linear-gradient(135deg, #e3f2fd 0%, #90caf9 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(1) p { color: #0d47a1 !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(1)[aria-selected="true"] {
+        background: linear-gradient(135deg, #1976d2 0%, #0d47a1 100%) !important;
+        border-color: #0d47a1 !important;
+        box-shadow: 0 4px 14px rgba(13, 71, 161, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(1)[aria-selected="true"] p {
+        color: white !important;
+    }
+
+    /* ---- Tab 2 — ORANGE (5-Day Forecasts / Patterns sub-tab) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(2) {
+        background: linear-gradient(135deg, #fff3e0 0%, #ffcc80 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(2) p { color: #e65100 !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(2)[aria-selected="true"] {
+        background: linear-gradient(135deg, #f57c00 0%, #e65100 100%) !important;
+        border-color: #e65100 !important;
+        box-shadow: 0 4px 14px rgba(230, 81, 0, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(2)[aria-selected="true"] p {
+        color: white !important;
+    }
+
+    /* ---- Tab 3 — PURPLE (What-If Scenario / ARIMA sub-tab) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(3) {
+        background: linear-gradient(135deg, #f3e5f5 0%, #ce93d8 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(3) p { color: #4a148c !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(3)[aria-selected="true"] {
+        background: linear-gradient(135deg, #8e24aa 0%, #4a148c 100%) !important;
+        border-color: #4a148c !important;
+        box-shadow: 0 4px 14px rgba(74, 20, 140, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(3)[aria-selected="true"] p {
+        color: white !important;
+    }
+
+    /* ---- Tab 4 — GREEN (only on inner Forecasts: Random Forest sub-tab) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(4) {
+        background: linear-gradient(135deg, #e8f5e9 0%, #a5d6a7 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(4) p { color: #1b5e20 !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(4)[aria-selected="true"] {
+        background: linear-gradient(135deg, #43a047 0%, #1b5e20 100%) !important;
+        border-color: #1b5e20 !important;
+        box-shadow: 0 4px 14px rgba(27, 94, 32, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(4)[aria-selected="true"] p {
+        color: white !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 MMDD_RE = re.compile(r"^\d{2}/\d{2}$")
@@ -39,36 +136,77 @@ MMDD_RE = re.compile(r"^\d{2}/\d{2}$")
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-@st.cache_data(ttl=300, show_spinner=False)
-def get_expirations(ticker: str) -> List[str]:
-    """Return the list of option expiration dates ('YYYY-MM-DD') for a ticker."""
-    return list(yf.Ticker(ticker).options or [])
+# --------------------------------------------------------------------------- #
+# Caching strategy
+# --------------------------------------------------------------------------- #
+# Three layers of caching, designed to stay well under any rate limit:
+#
+#   1. Streamlit in-memory cache (`@st.cache_data`)  — fast hot path,
+#      avoids redundant work within a session.
+#   2. Disk-backed parquet cache (`cache.py`)         — survives restarts;
+#      historical OHLCV is fetched once and only the daily delta is pulled
+#      from yfinance afterwards.
+#   3. Long TTLs on data that rarely changes (expirations, option chain)
+#      so we don't refetch them on every interaction.
+# --------------------------------------------------------------------------- #
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def get_option_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (calls, puts) DataFrames for the given ticker + expiration."""
-    chain = yf.Ticker(ticker).option_chain(expiration)
-    return chain.calls, chain.puts
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_expirations(ticker: str, live_fetch: bool = False) -> List[str]:
+    """Disk-cached list of option expiration dates ('YYYY-MM-DD').
 
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_contract_history(contract_symbol: str) -> pd.DataFrame:
-    """Fetch ~3 months of OHLCV for a specific option contract symbol.
-
-    The display table shows the most recent 30 trading sessions; we fetch
-    a buffer to handle weekends/holidays and any thin-trading days.
+    With ``live_fetch=False`` (default) returns whatever's on disk and does
+    not call yfinance.
     """
-    return yf.Ticker(contract_symbol).history(period="3mo")
+    return fcache.disk_cached_expirations(ticker, live_fetch=live_fetch)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def get_underlying_history(ticker: str, period: str = "1y") -> pd.DataFrame:
-    """Fetch underlying OHLCV history for the given ticker."""
-    df = yf.Ticker(ticker).history(period=period)
-    if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
-    return df
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_option_chain(
+    ticker: str, expiration: str, live_fetch: bool = False
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Disk-cached option (calls, puts) chain. ``live_fetch=False`` = no network."""
+    return fcache.disk_cached_option_chain(ticker, expiration, live_fetch=live_fetch)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_contract_history(
+    contract_symbol: str, live_fetch: bool = False
+) -> pd.DataFrame:
+    """Disk-cached OHLCV for an option contract.
+
+    With ``live_fetch=True``: fetches only the daily delta since the last cached
+    bar (or bootstraps ~3mo on first run). With ``live_fetch=False``: pure disk
+    read, no yfinance calls.
+    """
+    return fcache.disk_cached_history(
+        contract_symbol, min_period="3mo", live_fetch=live_fetch
+    )
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_underlying_history(
+    ticker: str, period: str = "1y", live_fetch: bool = False
+) -> pd.DataFrame:
+    """Disk-cached OHLCV for the underlying stock.
+
+    With ``live_fetch=True``: incremental delta fetch (or ~1y bootstrap on first run).
+    With ``live_fetch=False``: pure disk read, no yfinance calls.
+    """
+    return fcache.disk_cached_history(ticker, min_period=period, live_fetch=live_fetch)
+
+
+def format_cache_badge(symbol: str, live_fetch: bool) -> str | None:
+    """Human-friendly 'Data updated: …' string, or None if no cache exists."""
+    meta = fcache.cache_metadata(symbol)
+    if meta is None:
+        return None
+    mode = "live" if live_fetch else "cache only"
+    return (
+        f"Data updated: {meta['cache_updated_at']:%Y-%m-%d %H:%M}  ·  "
+        f"Last bar: {meta['last_bar_date']:%Y-%m-%d}  ·  "
+        f"Mode: **{mode}**"
+    )
 
 
 def resolve_expiration(mm: int, dd: int, available: List[str]) -> str:
@@ -136,6 +274,98 @@ with st.sidebar.form("contract_form"):
 
 
 # --------------------------------------------------------------------------- #
+# Sidebar: data source toggle (cache-only vs. live)
+# --------------------------------------------------------------------------- #
+st.sidebar.markdown("### Data source")
+live_fetch = st.sidebar.checkbox(
+    "Fetch live data from Yahoo Finance",
+    value=False,
+    key="live_fetch",
+    help=(
+        "When **unchecked** (default), the app uses ONLY locally-cached data — "
+        "no calls to Yahoo Finance. Safest for staying under rate limits.\n\n"
+        "When **checked**, the app refreshes the cache: fetches just the daily "
+        "delta for OHLCV history, and re-pulls expirations + option chain."
+    ),
+)
+if live_fetch:
+    st.sidebar.caption(
+        ":green[**Live mode**] — Yahoo Finance will be called and the disk "
+        "cache will be updated."
+    )
+else:
+    st.sidebar.caption(
+        ":blue[**Cache-only mode**] — using whatever is already on disk. "
+        "No network calls."
+    )
+
+# Streamlit's @st.cache_data memoizes per-argument. If a fetch was attempted
+# in cache-only mode BEFORE disk had any data for that ticker, an empty
+# result gets memoized under the live_fetch=False key. Later, after the user
+# enables live mode and disk gets populated, switching back to cache-only
+# would otherwise still return that stale-empty memoized value.
+# So whenever live_fetch toggles, drop the four in-memory caches — the disk
+# is the source of truth and reads are <50ms.
+_prev_live_fetch = st.session_state.get("_prev_live_fetch")
+if _prev_live_fetch is not None and _prev_live_fetch != live_fetch:
+    get_expirations.clear()
+    get_option_chain.clear()
+    get_contract_history.clear()
+    get_underlying_history.clear()
+st.session_state["_prev_live_fetch"] = live_fetch
+
+
+# --------------------------------------------------------------------------- #
+# Sidebar: cache management
+# --------------------------------------------------------------------------- #
+with st.sidebar.expander("Cache settings", expanded=False):
+    summary = fcache.cache_summary()
+    st.caption(
+        f"**Disk cache:** `{summary['directory']}`\n\n"
+        f"**Files:** {summary['num_files']}  ·  "
+        f"**Size:** {summary['total_kb']} KB"
+    )
+    st.caption(
+        "OHLCV data is cached on disk and only the **daily delta** is fetched "
+        "from Yahoo Finance when *Fetch live data* is checked above."
+    )
+
+    # Show the most recently updated OHLCV caches.
+    # Option-chain snapshots ("__chain_") and expirations ("__expirations") are
+    # excluded — they aren't time-series and don't have a meaningful "last bar".
+    parquet_paths = sorted(
+        (
+            p
+            for p in fcache.CACHE_DIR.glob("*.parquet")
+            if "__chain_" not in p.name
+        ),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if parquet_paths:
+        rows = []
+        for p in parquet_paths[:8]:
+            symbol = p.stem
+            meta = fcache.cache_metadata(symbol)
+            if meta is None:
+                continue
+            rows.append(
+                f"- `{symbol}` · "
+                f"updated {meta['cache_updated_at']:%Y-%m-%d %H:%M} · "
+                f"last bar {meta['last_bar_date']:%Y-%m-%d}"
+            )
+        if rows:
+            st.caption("**Recently updated:**")
+            st.markdown("\n".join(rows))
+
+    if st.button("Clear all cached data", use_container_width=True):
+        n = fcache.clear_cache()
+        st.cache_data.clear()
+        st.success(f"Cleared {n} cached file(s) and reset in-memory cache.")
+        st.rerun()
+
+
+# --------------------------------------------------------------------------- #
 # Main panel
 # --------------------------------------------------------------------------- #
 st.title("Stock Options Dashboard")
@@ -192,16 +422,22 @@ strike = _inputs["strike"]
 # 2. Look up available expirations ---------------------------------------- #
 with st.spinner(f"Looking up option expirations for {ticker}…"):
     try:
-        expirations = get_expirations(ticker)
+        expirations = get_expirations(ticker, live_fetch=live_fetch)
     except Exception as exc:  # noqa: BLE001 — surface any yfinance error to user
         st.error(f"Could not fetch options for `{ticker}`: {exc}")
         st.stop()
 
 if not expirations:
-    st.error(
-        f"`{ticker}` has no listed options on Yahoo Finance. "
-        "Double-check the ticker symbol."
-    )
+    if not live_fetch:
+        st.warning(
+            f"No cached expirations on disk for `{ticker}`. "
+            "Tick **Fetch live data** in the sidebar to download them, then re-submit."
+        )
+    else:
+        st.error(
+            f"`{ticker}` has no listed options on Yahoo Finance. "
+            "Double-check the ticker symbol."
+        )
     st.stop()
 
 # 3. Resolve MM/DD -> full date ------------------------------------------- #
@@ -218,12 +454,22 @@ except ValueError:
 # 4. Pull option chain and find the contract ------------------------------ #
 with st.spinner(f"Loading {option_type.lower()}s chain for {expiration_date}…"):
     try:
-        calls, puts = get_option_chain(ticker, expiration_date)
+        calls, puts = get_option_chain(ticker, expiration_date, live_fetch=live_fetch)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Failed to load option chain: {exc}")
         st.stop()
 
 chain_df = calls if option_type == "Call" else puts
+if chain_df is None or chain_df.empty:
+    if not live_fetch:
+        st.warning(
+            f"No cached option chain on disk for `{ticker}` exp {expiration_date}. "
+            "Tick **Fetch live data** in the sidebar to download it, then re-submit."
+        )
+    else:
+        st.error(f"Empty option chain returned for {ticker} {expiration_date}.")
+    st.stop()
+
 match = chain_df[chain_df["strike"].round(4) == round(strike, 4)]
 
 if match.empty:
@@ -264,17 +510,41 @@ cols[2].metric(
 # 6. Fetch last 30 trading sessions --------------------------------------- #
 with st.spinner("Fetching last 30 trading sessions…"):
     try:
-        hist = get_contract_history(contract_symbol)
+        hist = get_contract_history(contract_symbol, live_fetch=live_fetch)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Failed to fetch contract history: {exc}")
         st.stop()
 
 if hist is None or hist.empty:
-    st.warning(
-        "No historical price data available for this contract. "
-        "It may be illiquid or newly listed. Try a different strike or expiration."
-    )
+    if not live_fetch:
+        st.warning(
+            f"No cached history on disk for contract `{contract_symbol}`. "
+            "Tick **Fetch live data** in the sidebar to download ~3 months of "
+            "history for this contract, then re-submit. After that you can "
+            "uncheck the box again to keep using the cache."
+        )
+    else:
+        st.warning(
+            "No historical price data available for this contract. "
+            "It may be illiquid or newly listed. Try a different strike or expiration."
+        )
     st.stop()
+
+# --- Data-update badge — last cache write time + live/cache mode ---------- #
+contract_badge = format_cache_badge(contract_symbol, live_fetch=live_fetch)
+underlying_meta = fcache.cache_metadata(ticker)
+if contract_badge:
+    if live_fetch:
+        st.success(":satellite: " + contract_badge)
+    else:
+        st.info(":package: " + contract_badge)
+    if underlying_meta:
+        st.caption(
+            f"Underlying `{ticker}` cache last updated "
+            f"{underlying_meta['cache_updated_at']:%Y-%m-%d %H:%M} "
+            f"(last bar {underlying_meta['last_bar_date']:%Y-%m-%d}, "
+            f"{underlying_meta['num_rows']} rows)."
+        )
 
 hist = hist.tail(30).copy()
 hist.index = hist.index.tz_localize(None) if hist.index.tz is not None else hist.index
@@ -302,7 +572,9 @@ with tab_recent:
     # Pull the underlying stock's close prices for the same dates as `hist`
     stock_close_aligned = pd.Series(index=hist.index, dtype=float)
     try:
-        underlying_recent = get_underlying_history(ticker, period="3mo")
+        underlying_recent = get_underlying_history(
+            ticker, period="3mo", live_fetch=live_fetch
+        )
         if underlying_recent is not None and not underlying_recent.empty:
             stock_close_aligned = underlying_recent["Close"].reindex(
                 hist.index, method="ffill"
@@ -463,16 +735,25 @@ with tab_forecast:
 
     with st.spinner("Loading 1 year of underlying price history…"):
         try:
-            underlying = get_underlying_history(ticker, period="1y")
+            underlying = get_underlying_history(
+                ticker, period="1y", live_fetch=live_fetch
+            )
         except Exception as exc:  # noqa: BLE001
             st.error(f"Could not fetch underlying history for `{ticker}`: {exc}")
             st.stop()
 
     if underlying is None or underlying.empty or len(underlying) < 60:
-        st.warning(
-            "Not enough underlying history to run forecasts (need ~60 trading days). "
-            "Skipping the Forecasts section."
-        )
+        if not live_fetch:
+            st.warning(
+                f"Not enough cached underlying history for `{ticker}` to run "
+                "forecasts (need ~60 trading days). Tick **Fetch live data** in "
+                "the sidebar to download ~1 year of history, then re-submit."
+            )
+        else:
+            st.warning(
+                "Not enough underlying history to run forecasts (need ~60 trading "
+                "days). Skipping the Forecasts section."
+            )
         st.stop()
 
     spot = float(underlying["Close"].iloc[-1])
