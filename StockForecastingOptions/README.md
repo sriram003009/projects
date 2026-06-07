@@ -1,6 +1,6 @@
 # Options Lookup
 
-A Streamlit web app that fetches the **last 10 trading sessions** for a
+A Streamlit web app that fetches the **last 30 trading sessions** for a
 specific stock option contract and offers **four next-5-day forecast
 approaches**, all powered by free Yahoo Finance data via `yfinance`.
 
@@ -14,7 +14,7 @@ approaches**, all powered by free Yahoo Finance data via `yfinance`.
 
 ## Output
 
-### Section 1 — Last 10 trading sessions
+### Section 1 — Last 30 trading sessions
 
 - Summary header (last price, implied volatility, open interest)
 - Formatted table (Open / High / Low / Close / Volume)

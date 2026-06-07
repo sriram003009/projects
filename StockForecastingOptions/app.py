@@ -1,7 +1,7 @@
 """Options Lookup — Streamlit app.
 
 Takes a stock ticker, option type (Call/Put), expiration date in MM/DD format,
-and a strike price, then displays the last 10 trading sessions for that
+and a strike price, then displays the last 30 trading sessions for that
 specific option contract as both a table and an interactive Plotly chart.
 
 Also offers four next-5-day forecast approaches in a Forecasts section:
@@ -54,8 +54,12 @@ def get_option_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.Dat
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_contract_history(contract_symbol: str) -> pd.DataFrame:
-    """Fetch ~1 month of OHLCV for a specific option contract symbol."""
-    return yf.Ticker(contract_symbol).history(period="1mo")
+    """Fetch ~3 months of OHLCV for a specific option contract symbol.
+
+    The display table shows the most recent 30 trading sessions; we fetch
+    a buffer to handle weekends/holidays and any thin-trading days.
+    """
+    return yf.Ticker(contract_symbol).history(period="3mo")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -257,8 +261,8 @@ cols[2].metric(
     format_volume(open_interest) if pd.notna(open_interest) else "—",
 )
 
-# 6. Fetch last 10 trading sessions --------------------------------------- #
-with st.spinner("Fetching last 10 trading sessions…"):
+# 6. Fetch last 30 trading sessions --------------------------------------- #
+with st.spinner("Fetching last 30 trading sessions…"):
     try:
         hist = get_contract_history(contract_symbol)
     except Exception as exc:  # noqa: BLE001
@@ -272,7 +276,7 @@ if hist is None or hist.empty:
     )
     st.stop()
 
-hist = hist.tail(10).copy()
+hist = hist.tail(30).copy()
 hist.index = hist.index.tz_localize(None) if hist.index.tz is not None else hist.index
 
 
@@ -287,23 +291,91 @@ tab_recent, tab_forecast, tab_whatif = st.tabs([
 
 with tab_recent:
     # 7. Table ---------------------------------------------------------------- #
-    st.markdown("### Last 10 Trading Sessions")
+    st.markdown("### Last 30 Trading Sessions")
+    st.caption(
+        f"Open / High / Low / Close / Volume below are for the **option contract**. "
+        f"The **{ticker} Close** column shows what the underlying stock closed at on that "
+        "same day. The highest stock close is highlighted in "
+        ":blue-background[**blue**] and the lowest in :red-background[**red**]."
+    )
+
+    # Pull the underlying stock's close prices for the same dates as `hist`
+    stock_close_aligned = pd.Series(index=hist.index, dtype=float)
+    try:
+        underlying_recent = get_underlying_history(ticker, period="3mo")
+        if underlying_recent is not None and not underlying_recent.empty:
+            stock_close_aligned = underlying_recent["Close"].reindex(
+                hist.index, method="ffill"
+            )
+    except Exception:
+        pass  # column will show "—" via NaN handling below
 
     display_df = hist[["Open", "High", "Low", "Close", "Volume"]].copy()
     display_df.insert(0, "Date", display_df.index.strftime("%Y-%m-%d"))
-    display_df = display_df.reset_index(drop=True)
+    display_df["Stock Close"] = stock_close_aligned.values
+    # Reorder so Stock Close sits right after the option's Close, before Volume
+    display_df = display_df[
+        ["Date", "Open", "High", "Low", "Close", "Stock Close", "Volume"]
+    ].reset_index(drop=True)
+
+    def _highlight_stock_close(col: pd.Series) -> list[str]:
+        """Highlight the highest stock close blue and the lowest red."""
+        valid = col.dropna()
+        if valid.empty or valid.max() == valid.min():
+            return [""] * len(col)
+        col_max = valid.max()
+        col_min = valid.min()
+        styles = []
+        for v in col:
+            if pd.isna(v):
+                styles.append("")
+            elif v == col_max:
+                styles.append(
+                    "background-color: #1e88e5; color: white; font-weight: 600"
+                )
+            elif v == col_min:
+                styles.append(
+                    "background-color: #e53935; color: white; font-weight: 600"
+                )
+            else:
+                styles.append("")
+        return styles
+
+    styled_df = (
+        display_df.style
+        .apply(_highlight_stock_close, subset=["Stock Close"])
+        .format(
+            {
+                "Open": "${:,.2f}",
+                "High": "${:,.2f}",
+                "Low": "${:,.2f}",
+                "Close": "${:,.2f}",
+                "Stock Close": "${:,.2f}",
+                "Volume": "{:,.0f}",
+            },
+            na_rep="—",
+        )
+    )
 
     st.dataframe(
-        display_df,
+        styled_df,
         use_container_width=True,
         hide_index=True,
         column_config={
             "Date": st.column_config.TextColumn("Date"),
-            "Open": st.column_config.NumberColumn("Open", format="$%.2f"),
-            "High": st.column_config.NumberColumn("High", format="$%.2f"),
-            "Low": st.column_config.NumberColumn("Low", format="$%.2f"),
-            "Close": st.column_config.NumberColumn("Close", format="$%.2f"),
-            "Volume": st.column_config.NumberColumn("Volume", format="%d"),
+            "Open": st.column_config.NumberColumn("Option Open"),
+            "High": st.column_config.NumberColumn("Option High"),
+            "Low": st.column_config.NumberColumn("Option Low"),
+            "Close": st.column_config.NumberColumn("Option Close"),
+            "Stock Close": st.column_config.NumberColumn(
+                f"{ticker} Close",
+                help=(
+                    f"{ticker}'s closing stock price on that day. "
+                    "Highest = blue background, lowest = red background. "
+                    "Use this to see how the option moved with the stock."
+                ),
+            ),
+            "Volume": st.column_config.NumberColumn("Volume"),
         },
     )
 
