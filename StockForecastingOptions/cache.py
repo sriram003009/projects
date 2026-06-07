@@ -267,16 +267,34 @@ def cache_metadata(symbol: str) -> dict | None:
 # --------------------------------------------------------------------------- #
 # Maintenance
 # --------------------------------------------------------------------------- #
-def clear_cache(symbol: str | None = None) -> int:
-    """Delete cached files. Returns number of files removed."""
+def clear_cache(symbol: str | None = None, *, confirm: bool = False) -> int:
+    """Delete cached files. Returns number of files removed.
+
+    Modes:
+      - ``clear_cache("NVDA")``                — delete just one symbol's OHLCV file.
+      - ``clear_cache(None, confirm=True)``    — wipe **every** file in ``.cache/``.
+
+    The ``confirm=True`` keyword is **required** for the full-wipe path. This
+    is a safety belt: it prevents a casual script (or smoke test) from
+    importing this module and accidentally calling ``clear_cache()`` to delete
+    every cached parquet/JSON file. A wipe affects option-chain snapshots,
+    expirations lists, and OHLCV histories for every ticker — easy to lose
+    minutes or hours of cached work.
+    """
     if symbol is not None:
         n = 0
-        # OHLCV file
         path = CACHE_DIR / _safe_filename(symbol)
         if path.exists():
             path.unlink()
             n += 1
         return n
+
+    if not confirm:
+        raise ValueError(
+            "clear_cache(): wiping the entire cache requires confirm=True. "
+            "Pass `confirm=True` explicitly, or pass a single `symbol=` to "
+            "delete just one file."
+        )
 
     n = 0
     for f in CACHE_DIR.glob("*"):

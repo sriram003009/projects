@@ -209,6 +209,70 @@ def format_cache_badge(symbol: str, live_fetch: bool) -> str | None:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Watchlist for the "Track the Best" tab
+# --------------------------------------------------------------------------- #
+WATCHLIST: list[tuple[str, str]] = [
+    ("TSLA", "Tesla"),
+    ("NVDA", "NVIDIA"),
+    ("SPY", "S&P 500 (SPY)"),
+    ("META", "Meta"),
+    ("MSFT", "Microsoft"),
+    ("AMZN", "Amazon"),
+    ("GOOGL", "Google"),
+    ("NFLX", "Netflix"),
+]
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_watchlist_movers(live_fetch: bool) -> list[dict]:
+    """Compute today's % change for each ticker in WATCHLIST.
+
+    For each ticker, loads the disk-cached OHLCV (or fetches the daily delta
+    when ``live_fetch=True``), then computes the percent change between the
+    last two closes. Returns a list of dicts; tickers with insufficient data
+    are flagged with ``available=False``.
+    """
+    rows: list[dict] = []
+    for symbol, name in WATCHLIST:
+        try:
+            df = fcache.disk_cached_history(
+                symbol, min_period="1mo", live_fetch=live_fetch
+            )
+        except Exception:
+            df = None
+
+        if df is None or df.empty or len(df) < 2:
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "pct": None,
+                    "close": None,
+                    "prev_close": None,
+                    "last_bar": None,
+                    "available": False,
+                }
+            )
+            continue
+
+        last_close = float(df["Close"].iloc[-1])
+        prev_close = float(df["Close"].iloc[-2])
+        pct = (last_close - prev_close) / prev_close * 100.0 if prev_close else 0.0
+        rows.append(
+            {
+                "symbol": symbol,
+                "name": name,
+                "pct": pct,
+                "close": last_close,
+                "prev_close": prev_close,
+                "last_bar": df.index[-1],
+                "available": True,
+            }
+        )
+    return rows
+
+
 def resolve_expiration(mm: int, dd: int, available: List[str]) -> str:
     """Map MM/DD to the soonest matching real expiration date.
 
@@ -312,6 +376,7 @@ if _prev_live_fetch is not None and _prev_live_fetch != live_fetch:
     get_option_chain.clear()
     get_contract_history.clear()
     get_underlying_history.clear()
+    get_watchlist_movers.clear()
 st.session_state["_prev_live_fetch"] = live_fetch
 
 
@@ -358,10 +423,25 @@ with st.sidebar.expander("Cache settings", expanded=False):
             st.caption("**Recently updated:**")
             st.markdown("\n".join(rows))
 
-    if st.button("Clear all cached data", use_container_width=True):
-        n = fcache.clear_cache()
+    confirm_wipe = st.checkbox(
+        "Yes, wipe everything",
+        value=False,
+        key="confirm_cache_wipe",
+        help=(
+            "Safety belt — you must check this before the **Clear all cached "
+            "data** button will actually delete files. This is irreversible "
+            "and affects every cached symbol (OHLCV, option chains, expirations)."
+        ),
+    )
+    if st.button(
+        "Clear all cached data",
+        use_container_width=True,
+        disabled=not confirm_wipe,
+    ):
+        n = fcache.clear_cache(confirm=True)
         st.cache_data.clear()
         st.success(f"Cleared {n} cached file(s) and reset in-memory cache.")
+        st.session_state["confirm_cache_wipe"] = False
         st.rerun()
 
 
@@ -371,10 +451,137 @@ with st.sidebar.expander("Cache settings", expanded=False):
 st.title("Stock Options Dashboard")
 st.caption(
     "Enter a ticker, option type, expiration (MM/DD) and strike on the left, "
-    "then click **Fetch Data**. Three tabs below: recent activity, 5-day "
-    "forecasts, and a Greeks-based what-if calculator. "
+    "then click **Fetch Data**. Four tabs below: recent activity, 5-day "
+    "forecasts, a Greeks-based what-if calculator, and today's watchlist movers. "
     "Data is sourced from Yahoo Finance via yfinance."
 )
+
+# Top-level tabs are defined up-front so the Track-the-Best (watchlist) tab is
+# always rendered, even before the user submits the contract form.
+tab_recent, tab_forecast, tab_whatif, tab_movers = st.tabs([
+    "Recent Activity",
+    "5-Day Forecasts",
+    "What-If Scenario",
+    "Track the Best",
+])
+
+
+# --------------------------------------------------------------------------- #
+# Track-the-Best tab — daily movers from a fixed watchlist
+# --------------------------------------------------------------------------- #
+with tab_movers:
+    st.markdown("### Daily Movers — Watchlist")
+    st.caption(
+        "A quick read on the day's biggest moves across a fixed watchlist. "
+        "Each line shows the percent change between the previous close and "
+        "the latest close, plus the latest closing price."
+    )
+
+    movers_live = st.checkbox(
+        "Fetch live data for watchlist",
+        value=False,
+        key="movers_live_fetch",
+        help=(
+            "When **unchecked** (default), uses ONLY locally-cached data on "
+            "disk — no calls to Yahoo Finance. Tick this and click **Refresh** "
+            "to pull the latest closes for all watchlist tickers."
+        ),
+    )
+
+    # Same staleness guard as the sidebar's live_fetch: toggling this flag
+    # invalidates the in-memory watchlist cache so refreshed disk data is
+    # picked up the next read.
+    _prev_movers_live = st.session_state.get("_prev_movers_live")
+    if _prev_movers_live is not None and _prev_movers_live != movers_live:
+        get_watchlist_movers.clear()
+    st.session_state["_prev_movers_live"] = movers_live
+
+    mc1, mc2 = st.columns([1, 4])
+    with mc1:
+        if st.button("Refresh now", use_container_width=True, key="movers_refresh"):
+            get_watchlist_movers.clear()
+            st.rerun()
+    with mc2:
+        if movers_live:
+            st.caption(
+                ":green[**Live mode**] — Yahoo Finance will be called and "
+                "the disk cache will be refreshed."
+            )
+        else:
+            st.caption(
+                ":blue[**Cache-only mode**] — using whatever is already on disk."
+            )
+
+    with st.spinner("Loading watchlist…"):
+        movers = get_watchlist_movers(live_fetch=movers_live)
+
+    available = [r for r in movers if r["available"]]
+    unavailable = [r for r in movers if not r["available"]]
+    gainers = sorted(
+        (r for r in available if r["pct"] is not None and r["pct"] > 0),
+        key=lambda r: r["pct"], reverse=True,
+    )
+    losers = sorted(
+        (r for r in available if r["pct"] is not None and r["pct"] < 0),
+        key=lambda r: r["pct"],
+    )
+    flat = [r for r in available if r["pct"] == 0]
+
+    if available:
+        latest_bar = max(r["last_bar"] for r in available)
+        st.caption(
+            f"Latest bar across watchlist: **{latest_bar:%Y-%m-%d}**  ·  "
+            f"Comparing to the previous close."
+        )
+
+    col_up, col_down = st.columns(2)
+
+    with col_up:
+        st.markdown(f"#### :green[📈 What went up today] ({len(gainers)})")
+        if not gainers:
+            st.caption(
+                "Nothing in the green today — or no cached data yet. "
+                "Tick **Fetch live data for watchlist** above and click **Refresh**."
+            )
+        for r in gainers:
+            st.markdown(
+                f"**{r['name']}** ({r['symbol']}) went up "
+                f":green[**+{r['pct']:.2f}%**] and last closed at "
+                f"**${r['close']:,.2f}**  \n"
+                f":gray[Previous close: ${r['prev_close']:,.2f}  ·  "
+                f"Bar date: {r['last_bar']:%Y-%m-%d}]"
+            )
+
+    with col_down:
+        st.markdown(f"#### :red[📉 What went down today] ({len(losers)})")
+        if not losers:
+            st.caption(
+                "Nothing in the red today — or no cached data yet. "
+                "Tick **Fetch live data for watchlist** above and click **Refresh**."
+            )
+        for r in losers:
+            st.markdown(
+                f"**{r['name']}** ({r['symbol']}) went down "
+                f":red[**{r['pct']:.2f}%**] and last closed at "
+                f"**${r['close']:,.2f}**  \n"
+                f":gray[Previous close: ${r['prev_close']:,.2f}  ·  "
+                f"Bar date: {r['last_bar']:%Y-%m-%d}]"
+            )
+
+    if flat:
+        st.caption(
+            "**Flat (0.00%):** "
+            + ", ".join(f"{r['name']} ({r['symbol']})" for r in flat)
+        )
+
+    if unavailable:
+        st.warning(
+            "No cached data for: "
+            + ", ".join(f"`{r['symbol']}`" for r in unavailable)
+            + ". Tick **Fetch live data for watchlist** above and click "
+            "**Refresh** to download initial history for them."
+        )
+
 
 # Persist last-submitted form values across reruns so What-If widgets don't
 # wipe the page. Validate freshly-submitted values, then store them.
@@ -408,7 +615,14 @@ if submitted:
     }
 
 if "fetch_inputs" not in st.session_state:
-    st.info("Fill in the form on the left and click **Fetch Data** to get started.")
+    for _t in (tab_recent, tab_forecast, tab_whatif):
+        with _t:
+            st.info(
+                "Fill in the form on the left (ticker, option type, "
+                "expiration, strike) and click **Fetch Data** to load this tab. "
+                "The **Track the Best** tab works independently and is "
+                "already populated above."
+            )
     st.stop()
 
 _inputs = st.session_state["fetch_inputs"]
@@ -551,14 +765,8 @@ hist.index = hist.index.tz_localize(None) if hist.index.tz is not None else hist
 
 
 # --------------------------------------------------------------------------- #
-# Top-level tabbed layout
+# Tab content — tabs were defined up-front near the title.
 # --------------------------------------------------------------------------- #
-tab_recent, tab_forecast, tab_whatif = st.tabs([
-    "Recent Activity",
-    "5-Day Forecasts",
-    "What-If Scenario",
-])
-
 with tab_recent:
     # 7. Table ---------------------------------------------------------------- #
     st.markdown("### Last 30 Trading Sessions")

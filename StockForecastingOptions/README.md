@@ -39,6 +39,28 @@ option price (and confidence bands where applicable) from each approach
 side-by-side. Per-approach detail tabs include forecast charts overlaid on the
 option's recent history.
 
+### Section 4 — Track the Best (watchlist movers)
+
+A standalone tab — works independently of the contract form — that shows
+today's biggest moves across a fixed watchlist:
+
+> Tesla, NVIDIA, S&P 500 (SPY), Meta, Microsoft, Amazon, Google, Netflix
+
+For each ticker, the app computes the percent change between yesterday's close
+and the latest close, then sorts the results into two side-by-side columns:
+
+- **📈 What went up today** — gainers, sorted high-to-low
+- **📉 What went down today** — losers, sorted low-to-high
+
+Each line is rendered in plain English, e.g.:
+
+> **Tesla** (TSLA) went up **+5.20%** and last closed at **$420.50**
+> Previous close: $399.71  ·  Bar date: 2026-06-06
+
+The tab has its **own** *Fetch live data for watchlist* checkbox (separate
+from the global one) and a **Refresh now** button so you control exactly
+when the watchlist queries Yahoo Finance.
+
 ## How to run this app
 
 ### Project layout
