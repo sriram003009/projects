@@ -41,22 +41,37 @@ option's recent history.
 
 ## How to run this app
 
-### One-time setup (first run only)
+### Project layout
 
-Create a virtual environment and install dependencies:
+The virtual environment and the app code live in **separate** directories:
+
+```
+/Users/sriramsreedhar/WORK4/
+├── .venv/                          ← virtual environment (one level up)
+└── StockForecastingOptions/        ← app code (this folder)
+    ├── app.py
+    ├── forecasting.py
+    ├── requirements.txt
+    └── README.md
+```
+
+This is why the run instructions below `cd` into
+`StockForecastingOptions` but activate the venv from the parent.
+
+### One-time setup (first run only)
 
 ```bash
 cd /Users/sriramsreedhar/WORK4
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r StockForecastingOptions/requirements.txt
 ```
 
 ### Every time you want to start the app
 
 ```bash
-cd /Users/sriramsreedhar/WORK4
-source .venv/bin/activate
+source /Users/sriramsreedhar/WORK4/.venv/bin/activate
+cd /Users/sriramsreedhar/WORK4/StockForecastingOptions
 streamlit run app.py
 ```
 
@@ -65,18 +80,33 @@ virtual environment is active. The app will open in your browser at
 [http://localhost:8501](http://localhost:8501). Press `Ctrl+C` in the terminal
 to stop the server.
 
-> **Note:** Do **not** `cd` into the `.venv` directory before activating. The
-> activate script lives at `.venv/bin/activate` *relative to the project
-> root*, so you must stay in `/Users/sriramsreedhar/WORK4` (or use the full
-> path `source /Users/sriramsreedhar/WORK4/.venv/bin/activate`).
+> **Important paths to remember:**
+>
+> - The activate script is at `/Users/sriramsreedhar/WORK4/.venv/bin/activate`
+>   (in the parent directory, **not** inside `StockForecastingOptions`).
+> - `app.py` is at `/Users/sriramsreedhar/WORK4/StockForecastingOptions/app.py`,
+>   so `streamlit run app.py` must be invoked from inside that folder.
+> - Do **not** `cd` into `.venv` itself before activating — the activate path
+>   is relative to its parent.
+
+### Optional: one-line shortcut
+
+If you don't want to type all that each time, add this alias to your
+`~/.zshrc`:
+
+```bash
+alias runforecast='source /Users/sriramsreedhar/WORK4/.venv/bin/activate && cd /Users/sriramsreedhar/WORK4/StockForecastingOptions && streamlit run app.py'
+```
+
+Then reload (`source ~/.zshrc`) and just run `runforecast` from anywhere.
 
 ### Alternative: run without the venv
 
-If the system Python 3.12 already has the dependencies installed (e.g. via
-`pip install -r requirements.txt` system-wide), you can skip activation:
+If the system Python 3.12 already has the dependencies installed
+system-wide, you can skip activation:
 
 ```bash
-cd /Users/sriramsreedhar/WORK4
+cd /Users/sriramsreedhar/WORK4/StockForecastingOptions
 streamlit run app.py
 ```
 
