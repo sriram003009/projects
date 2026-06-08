@@ -30,6 +30,15 @@ import yfinance as yf
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
+# Approximate calendar-day spans for the yfinance ``period`` strings we use.
+# Used to detect when an existing cache is too short for a new request, so the
+# incremental-delta path can fall through to a full re-bootstrap.
+_PERIOD_TO_DAYS: dict[str, int] = {
+    "1d": 1, "5d": 5, "1mo": 31, "3mo": 92, "6mo": 184,
+    "1y": 365, "2y": 730, "5y": 1825, "10y": 3650,
+    "ytd": 365, "max": 36500,
+}
+
 
 # --------------------------------------------------------------------------- #
 # Filename helpers
@@ -106,6 +115,30 @@ def disk_cached_history(
         return cached if cached is not None else pd.DataFrame()
 
     target_date = _last_business_day()
+
+    # If the existing cache doesn't span far enough back to satisfy
+    # ``min_period``, fall through to a full re-bootstrap (otherwise the
+    # incremental-delta path would happily extend forward but never grow
+    # backward, leaving the cache stuck at its original short window).
+    if cached is not None and not cached.empty:
+        expected_days = _PERIOD_TO_DAYS.get(min_period, 92)
+        # 0.85 fudge factor: yfinance often returns slightly less than the
+        # nominal period (weekends, holidays, IPO date, etc.).
+        required_oldest = target_date - pd.Timedelta(days=int(expected_days * 0.85))
+        oldest_cached = cached.index.min().normalize()
+        if oldest_cached > required_oldest:
+            try:
+                df = yf.Ticker(symbol).history(period=min_period)
+            except Exception:
+                pass
+            else:
+                df = _strip_tz(df)
+                if df is not None and not df.empty:
+                    try:
+                        df.to_parquet(path)
+                    except Exception:
+                        pass
+                    return df
 
     # Incremental update path
     if cached is not None and not cached.empty:

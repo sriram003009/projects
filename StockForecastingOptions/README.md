@@ -39,7 +39,29 @@ option price (and confidence bands where applicable) from each approach
 side-by-side. Per-approach detail tabs include forecast charts overlaid on the
 option's recent history.
 
-### Section 4 — Track the Best (watchlist movers)
+### Section 4 — Cached Data (browse previously-fetched contracts)
+
+A standalone tab — works independently of the contract form — that lists
+every option contract you've previously fetched (and still have on disk),
+parses each OCC symbol, and lets you re-view the data without any network
+call.
+
+For each cached contract you'll see:
+
+- A summary table with **Ticker / Type / Strike / Expiration / Rows / Last bar
+  / Cached on / Size**
+- A drop-down to pick one
+- The contract's last 30 sessions (with the highest/lowest underlying-stock
+  close highlighted blue/red, same as Recent Activity)
+- A candlestick + close-line + volume chart
+- A **Load this contract into the sidebar form** button — pre-fills the form
+  inputs for that contract so you can run forecasts or What-If on it without
+  retyping a thing
+
+This is the simplest way to revisit anything you've already pulled, and it's
+fully cache-only by design — no Yahoo Finance calls.
+
+### Section 5 — Track the Best (watchlist movers)
 
 A standalone tab — works independently of the contract form — that shows
 today's biggest moves across a fixed watchlist:

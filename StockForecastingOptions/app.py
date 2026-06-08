@@ -112,7 +112,7 @@ st.markdown(
         color: white !important;
     }
 
-    /* ---- Tab 4 — GREEN (only on inner Forecasts: Random Forest sub-tab) ---- */
+    /* ---- Tab 4 — GREEN (Track the Best / Random Forest sub-tab) ---- */
     .stTabs [data-baseweb="tab"]:nth-child(4) {
         background: linear-gradient(135deg, #e8f5e9 0%, #a5d6a7 100%) !important;
     }
@@ -123,6 +123,48 @@ st.markdown(
         box-shadow: 0 4px 14px rgba(27, 94, 32, 0.4) !important;
     }
     .stTabs [data-baseweb="tab"]:nth-child(4)[aria-selected="true"] p {
+        color: white !important;
+    }
+
+    /* ---- Tab 5 — TEAL (Quick Summary) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(5) {
+        background: linear-gradient(135deg, #e0f2f1 0%, #80cbc4 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(5) p { color: #00695c !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(5)[aria-selected="true"] {
+        background: linear-gradient(135deg, #00897b 0%, #00695c 100%) !important;
+        border-color: #00695c !important;
+        box-shadow: 0 4px 14px rgba(0, 105, 92, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(5)[aria-selected="true"] p {
+        color: white !important;
+    }
+
+    /* ---- Tab 6 — INDIGO (Check SMA) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(6) {
+        background: linear-gradient(135deg, #e8eaf6 0%, #9fa8da 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(6) p { color: #1a237e !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(6)[aria-selected="true"] {
+        background: linear-gradient(135deg, #3949ab 0%, #1a237e 100%) !important;
+        border-color: #1a237e !important;
+        box-shadow: 0 4px 14px rgba(26, 35, 126, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(6)[aria-selected="true"] p {
+        color: white !important;
+    }
+
+    /* ---- Tab 7 — WARM STONE (Cached Data) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(7) {
+        background: linear-gradient(135deg, #efebe9 0%, #bcaaa4 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(7) p { color: #4e342e !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(7)[aria-selected="true"] {
+        background: linear-gradient(135deg, #6d4c41 0%, #4e342e 100%) !important;
+        border-color: #4e342e !important;
+        box-shadow: 0 4px 14px rgba(78, 52, 46, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(7)[aria-selected="true"] p {
         color: white !important;
     }
     </style>
@@ -210,12 +252,185 @@ def format_cache_badge(symbol: str, live_fetch: bool) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
+# Weekly-trend note (20-week MA / streak / 52-week high)
+# --------------------------------------------------------------------------- #
+def _ordinal(n: int) -> str:
+    """Return ``'1st'``, ``'2nd'``, ``'3rd'``, ``'4th'``, ..."""
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def weekly_trend_note(symbol: str, df: pd.DataFrame) -> dict | None:
+    """Build a 20-week MA / streak / 52-week-high trend note from daily OHLCV.
+
+    Computes:
+      - 20-week simple moving average (Friday-anchored weekly closes)
+      - whether the most-recent weekly close is above/below that MA
+      - the consecutive up-or-down weekly streak
+      - the 52-week high (acts as the "yearly resistance" level)
+
+    Returns a dict with raw values plus formatted ``note`` (markdown) and
+    ``note_plain`` (no markdown) strings, or ``None`` if there isn't enough
+    history (need at least 21 weekly bars).
+    """
+    if df is None or df.empty or "Close" not in df.columns:
+        return None
+    if not isinstance(df.index, pd.DatetimeIndex):
+        return None
+
+    # Strip TZ in-place defensively (some yfinance dumps come back tz-aware)
+    if df.index.tz is not None:
+        df = df.copy()
+        df.index = df.index.tz_localize(None)
+
+    weekly = df["Close"].resample("W-FRI").last().dropna()
+    if len(weekly) < 21:
+        return None
+
+    last_close = float(weekly.iloc[-1])
+    ma20 = float(weekly.rolling(20).mean().iloc[-1])
+    if pd.isna(ma20):
+        return None
+    above_ma = last_close > ma20
+
+    diffs = weekly.diff().iloc[1:]
+    streak = 0
+    streak_dir: str | None = None
+    for v in diffs.iloc[::-1]:
+        if pd.isna(v) or v == 0:
+            break
+        d = "up" if v > 0 else "down"
+        if streak_dir is None:
+            streak_dir = d
+            streak = 1
+        elif d == streak_dir:
+            streak += 1
+        else:
+            break
+
+    one_year_ago = df.index[-1] - pd.Timedelta(weeks=52)
+    yearly_window = df.loc[df.index >= one_year_ago, "Close"]
+    yearly_high = (
+        float(yearly_window.max())
+        if not yearly_window.empty
+        else float(df["Close"].max())
+    )
+
+    if streak == 0 or streak_dir is None:
+        streak_str = "no clear weekly streak"
+    else:
+        streak_str = f"{_ordinal(streak)} {streak_dir} week in a row"
+
+    ma20_str = f"{ma20:,.2f}"
+    yh_str = f"{yearly_high:,.2f}"
+
+    # Two parallel renderings:
+    #   * ``md``    — for st.markdown. ``\$`` escapes the dollar sign so
+    #                 Streamlit's MathJax doesn't pair them into a math region
+    #                 (which would render ** as ∗∗ and - as −).
+    #   * ``plain`` — for plain-text copy-paste, with real ``$`` and no markdown.
+    if above_ma and streak_dir == "down" and streak >= 2:
+        md = (
+            f"**\\${symbol}** — **{streak_str}** after hitting the 52-week "
+            f"high at **\\${yh_str}**. The weekly trend is still **bullish** "
+            f"as long as it trades above the 20-week MA that is currently at "
+            f"**\\${ma20_str}**."
+        )
+        plain = (
+            f"${symbol} — {streak_str} after hitting the 52-week high at "
+            f"${yh_str}. The weekly trend is still bullish as long as it "
+            f"trades above the 20-week MA that is currently at ${ma20_str}."
+        )
+    elif above_ma:
+        md = (
+            f"**\\${symbol}** — **{streak_str}**. Weekly trend is **bullish**: "
+            f"trading above the 20-week MA at **\\${ma20_str}**. "
+            f"52-week high: **\\${yh_str}**."
+        )
+        plain = (
+            f"${symbol} — {streak_str}. Weekly trend is bullish: trading "
+            f"above the 20-week MA at ${ma20_str}. 52-week high: ${yh_str}."
+        )
+    else:
+        md = (
+            f"**\\${symbol}** — **{streak_str}**. The weekly trend has turned "
+            f"**bearish** — currently below the 20-week MA at "
+            f"**\\${ma20_str}**. 52-week high: **\\${yh_str}**."
+        )
+        plain = (
+            f"${symbol} — {streak_str}. The weekly trend has turned bearish "
+            f"— currently below the 20-week MA at ${ma20_str}. "
+            f"52-week high: ${yh_str}."
+        )
+
+    return {
+        "symbol": symbol,
+        "last_weekly_close": last_close,
+        "ma20": ma20,
+        "above_ma": above_ma,
+        "streak": streak,
+        "streak_dir": streak_dir,
+        "yearly_high": yearly_high,
+        "note": md,
+        "note_plain": plain,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Cached-contract directory helpers (for the "Cached Data" tab)
+# --------------------------------------------------------------------------- #
+# OCC option symbol layout: ROOT + YY + MM + DD + (C|P) + STRIKE×1000 (8 digits)
+# e.g. NVDA250619C00220000 = NVDA, 2025-06-19, Call, $220.00
+OPTION_SYMBOL_RE = re.compile(r"^([A-Z]+)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")
+
+
+def parse_option_symbol(symbol: str) -> dict | None:
+    """Return ticker/expiration/type/strike from an OCC option symbol, or None."""
+    m = OPTION_SYMBOL_RE.match(symbol)
+    if not m:
+        return None
+    ticker, yy, mm, dd, cp, strike_int = m.groups()
+    year = 2000 + int(yy)
+    return {
+        "ticker": ticker,
+        "expiration": f"{year}-{mm}-{dd}",
+        "option_type": "Call" if cp == "C" else "Put",
+        "strike": int(strike_int) / 1000.0,
+        "contract_symbol": symbol,
+    }
+
+
+def list_cached_contracts() -> list[dict]:
+    """Scan ``./.cache/`` for cached option contracts and return their metadata.
+
+    Walks every ``*.parquet`` file in the cache directory, attempts to parse the
+    stem as an OCC option symbol, and (for matches) augments with cache mtime,
+    last-bar date, and row count from ``cache_metadata``.
+    """
+    rows: list[dict] = []
+    for path in fcache.CACHE_DIR.glob("*.parquet"):
+        if "__chain_" in path.name:
+            continue
+        parsed = parse_option_symbol(path.stem)
+        if parsed is None:
+            continue
+        meta = fcache.cache_metadata(path.stem)
+        if meta is None:
+            continue
+        rows.append({**parsed, **meta})
+    rows.sort(key=lambda r: (r["ticker"], r["expiration"], r["option_type"], r["strike"]))
+    return rows
+
+
+# --------------------------------------------------------------------------- #
 # Watchlist for the "Track the Best" tab
 # --------------------------------------------------------------------------- #
 WATCHLIST: list[tuple[str, str]] = [
     ("TSLA", "Tesla"),
     ("NVDA", "NVIDIA"),
-    ("SPY", "S&P 500 (SPY)"),
+    ("SPY", "SPY"),
     ("META", "Meta"),
     ("MSFT", "Microsoft"),
     ("AMZN", "Amazon"),
@@ -236,8 +451,9 @@ def get_watchlist_movers(live_fetch: bool) -> list[dict]:
     rows: list[dict] = []
     for symbol, name in WATCHLIST:
         try:
+            # 1y of history so we have enough weekly bars for the 20-week MA
             df = fcache.disk_cached_history(
-                symbol, min_period="1mo", live_fetch=live_fetch
+                symbol, min_period="1y", live_fetch=live_fetch
             )
         except Exception:
             df = None
@@ -252,6 +468,7 @@ def get_watchlist_movers(live_fetch: bool) -> list[dict]:
                     "prev_close": None,
                     "last_bar": None,
                     "available": False,
+                    "trend": None,
                 }
             )
             continue
@@ -268,9 +485,360 @@ def get_watchlist_movers(live_fetch: bool) -> list[dict]:
                 "prev_close": prev_close,
                 "last_bar": df.index[-1],
                 "available": True,
+                "trend": weekly_trend_note(symbol, df),
             }
         )
     return rows
+
+
+def _trend_label(trend: dict | None) -> tuple[str, bool | None]:
+    """Return (display label, above_ma) for the weekly-trend column."""
+    if trend is None:
+        return "—", None
+    if trend["above_ma"]:
+        return "▲ Bullish", True
+    return "▼ Bearish", False
+
+
+def _build_movers_table(rows: list[dict], direction: str) -> pd.DataFrame:
+    """Build a display DataFrame for gainers or losers."""
+    records: list[dict] = []
+    for r in rows:
+        trend = r.get("trend")
+        label, _ = _trend_label(trend)
+        if direction == "up":
+            move = f"went up {r['pct']:.2f}%"
+        else:
+            move = f"went down {abs(r['pct']):.2f}%"
+        weekly = (
+            trend["note_plain"]
+            if trend is not None
+            else "Not enough history for weekly trend"
+        )
+        ma20 = trend["ma20"] if trend is not None else None
+        records.append(
+            {
+                "Trend": label,
+                "Stock": r["name"],
+                "Today's move": move,
+                "Closed at": r["close"],
+                "20 week MA watchout": ma20,
+                "Weekly trend": weekly,
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def _style_movers_table(df: pd.DataFrame, direction: str):
+    """Color the Trend column (green/red) and the move/close columns."""
+
+    def _hl_trend(col: pd.Series) -> list[str]:
+        styles = []
+        for v in col:
+            if "Bearish" in str(v):
+                styles.append("color: #c62828; font-weight: 700")
+            elif "Bullish" in str(v):
+                styles.append("color: #2e7d32; font-weight: 700")
+            else:
+                styles.append("")
+        return styles
+
+    move_color = "#2e7d32" if direction == "up" else "#c62828"
+
+    styled = (
+        df.style
+        .apply(_hl_trend, subset=["Trend"])
+        .format(
+            {
+                "Closed at": "${:,.2f}",
+                "20 week MA watchout": "${:,.2f}",
+            },
+            na_rep="—",
+        )
+    )
+    styled = styled.set_properties(
+        subset=["Today's move"],
+        **{"color": move_color, "font-weight": "600"},
+    )
+    return styled
+
+
+def _sma_vs_label(close: float, sma: float) -> tuple[str, bool]:
+    """Return ``'Above (Bullish)'`` / ``'Below (Bearish)'`` and whether above."""
+    above = close > sma
+    if above:
+        return "Above (Bullish)", True
+    return "Below (Bearish)", False
+
+
+def _overall_sma_trend(above_50: bool, above_200: bool) -> str:
+    """Plain-English trend label from 50-day and 200-day SMA positions."""
+    if above_50 and above_200:
+        return "Long-term Uptrend"
+    if not above_50 and not above_200:
+        return "Downtrend"
+    if above_50 and not above_200:
+        return "Mixed"
+    return "Pullback"
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_sma_summary_table(live_fetch: bool) -> pd.DataFrame:
+    """50-day / 200-day SMA quick summary for every ticker in WATCHLIST."""
+    records: list[dict] = []
+    for symbol, name in WATCHLIST:
+        try:
+            df = fcache.disk_cached_history(
+                symbol, min_period="1y", live_fetch=live_fetch
+            )
+        except Exception:
+            df = None
+
+        if df is None or df.empty or len(df) < 200:
+            records.append(
+                {
+                    "Stock": symbol,
+                    "Name": name,
+                    "Price (approx.)": None,
+                    "50-day SMA price": None,
+                    "vs 50-day SMA": "—",
+                    "200-day SMA price": None,
+                    "vs 200-day SMA": "—",
+                    "Overall Trend": "Not enough history (need ~200 days)",
+                    "_above_50": None,
+                    "_above_200": None,
+                }
+            )
+            continue
+
+        if df.index.tz is not None:
+            df = df.copy()
+            df.index = df.index.tz_localize(None)
+
+        close = float(df["Close"].iloc[-1])
+        sma50 = float(df["Close"].rolling(50).mean().iloc[-1])
+        sma200 = float(df["Close"].rolling(200).mean().iloc[-1])
+        vs50, above_50 = _sma_vs_label(close, sma50)
+        vs200, above_200 = _sma_vs_label(close, sma200)
+
+        records.append(
+            {
+                "Stock": symbol,
+                "Name": name,
+                "Price (approx.)": close,
+                "50-day SMA price": sma50,
+                "vs 50-day SMA": vs50,
+                "200-day SMA price": sma200,
+                "vs 200-day SMA": vs200,
+                "Overall Trend": _overall_sma_trend(above_50, above_200),
+                "_above_50": above_50,
+                "_above_200": above_200,
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def _style_sma_table(df: pd.DataFrame):
+    """Green/red styling for Quick Summary and Check SMA tables."""
+
+    def _hl_sma(col: pd.Series) -> list[str]:
+        styles = []
+        for v in col:
+            if "Bullish" in str(v):
+                styles.append("color: #2e7d32; font-weight: 700")
+            elif "Bearish" in str(v):
+                styles.append("color: #c62828; font-weight: 700")
+            else:
+                styles.append("")
+        return styles
+
+    display = df.drop(columns=["Name", "_above_50", "_above_200"], errors="ignore")
+    return (
+        display.style
+        .apply(_hl_sma, subset=["vs 50-day SMA", "vs 200-day SMA"])
+        .format(
+            {
+                "Price (approx.)": "${:,.0f}",
+                "50-day SMA price": "${:,.2f}",
+                "200-day SMA price": "${:,.2f}",
+                "20 week MA watchout": "${:,.2f}",
+            },
+            na_rep="—",
+        )
+    )
+
+
+def _parse_ticker_list(raw: str) -> list[str]:
+    """Split comma/space-separated tickers into a deduped upper-case list."""
+    parts = re.split(r"[\s,;]+", raw.strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in parts:
+        t = p.strip().upper()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def build_sma_check_row(symbol: str, df: pd.DataFrame | None) -> dict:
+    """One SMA check row for *symbol* using cached or live OHLCV."""
+    symbol = symbol.strip().upper()
+    empty = {
+        "Stock": symbol,
+        "Price (approx.)": None,
+        "50-day SMA price": None,
+        "vs 50-day SMA": "—",
+        "200-day SMA price": None,
+        "vs 200-day SMA": "—",
+        "20 week MA watchout": None,
+        "Weekly trend": "—",
+        "Overall Trend": "No data on disk — enable live fetch",
+        "_above_50": None,
+        "_above_200": None,
+    }
+    if df is None or df.empty:
+        return empty
+
+    if df.index.tz is not None:
+        df = df.copy()
+        df.index = df.index.tz_localize(None)
+
+    close = float(df["Close"].iloc[-1])
+    trend = weekly_trend_note(symbol, df)
+
+    row: dict = {
+        "Stock": symbol,
+        "Price (approx.)": close,
+        "50-day SMA price": None,
+        "vs 50-day SMA": "—",
+        "200-day SMA price": None,
+        "vs 200-day SMA": "—",
+        "20 week MA watchout": trend["ma20"] if trend else None,
+        "Weekly trend": (
+            trend["note_plain"] if trend else "Not enough history for weekly trend"
+        ),
+        "Overall Trend": "—",
+        "_above_50": None,
+        "_above_200": None,
+    }
+
+    above_50: bool | None = None
+    above_200: bool | None = None
+
+    if len(df) >= 50:
+        sma50 = float(df["Close"].rolling(50).mean().iloc[-1])
+        vs50, above_50 = _sma_vs_label(close, sma50)
+        row["50-day SMA price"] = sma50
+        row["vs 50-day SMA"] = vs50
+        row["_above_50"] = above_50
+    else:
+        row["vs 50-day SMA"] = "Need ~50 days of history"
+
+    if len(df) >= 200:
+        sma200 = float(df["Close"].rolling(200).mean().iloc[-1])
+        vs200, above_200 = _sma_vs_label(close, sma200)
+        row["200-day SMA price"] = sma200
+        row["vs 200-day SMA"] = vs200
+        row["_above_200"] = above_200
+    else:
+        row["vs 200-day SMA"] = "Need ~200 days of history"
+
+    if above_50 is not None and above_200 is not None:
+        row["Overall Trend"] = _overall_sma_trend(above_50, above_200)
+    elif above_50 is not None:
+        row["Overall Trend"] = "Partial — need ~200 days for full SMA trend"
+    elif len(df) < 50:
+        row["Overall Trend"] = "Not enough history"
+
+    return row
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def lookup_sma_check(tickers: tuple[str, ...], live_fetch: bool) -> pd.DataFrame:
+    """Fetch SMA + weekly trend rows for arbitrary tickers."""
+    rows: list[dict] = []
+    for symbol in tickers:
+        try:
+            df = fcache.disk_cached_history(
+                symbol, min_period="1y", live_fetch=live_fetch
+            )
+        except Exception:
+            df = None
+        rows.append(build_sma_check_row(symbol, df))
+    return pd.DataFrame(rows)
+
+
+_CHECK_SMA_METRICS: list[str] = [
+    "Price (approx.)",
+    "50-day SMA price",
+    "vs 50-day SMA",
+    "200-day SMA price",
+    "vs 200-day SMA",
+    "20 week MA watchout",
+    "Overall Trend",
+    "Weekly trend",
+]
+
+# Shown in the vertical table — Weekly trend is rendered separately so it
+# can word-wrap cleanly (dataframe cells do not wrap long text well).
+_CHECK_SMA_TABLE_METRICS: list[str] = [
+    m for m in _CHECK_SMA_METRICS if m != "Weekly trend"
+]
+
+
+def _format_check_sma_cell(field: str, val) -> str:
+    """Format one cell for the vertical Check SMA table."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return "—"
+    if field == "Price (approx.)":
+        return f"${float(val):,.0f}"
+    if field in ("50-day SMA price", "200-day SMA price", "20 week MA watchout"):
+        return f"${float(val):,.2f}"
+    return str(val)
+
+
+def check_sma_vertical_table(
+    check_df: pd.DataFrame,
+    metrics: list[str] | None = None,
+) -> pd.DataFrame:
+    """Transpose Check SMA results — metrics as rows, each ticker as a column."""
+    if check_df.empty:
+        return pd.DataFrame(columns=["Metric"])
+
+    fields = metrics if metrics is not None else _CHECK_SMA_TABLE_METRICS
+    records: list[dict] = []
+    for field in fields:
+        row: dict = {"Metric": field}
+        for _, r in check_df.iterrows():
+            row[r["Stock"]] = _format_check_sma_cell(field, r.get(field))
+        records.append(row)
+    return pd.DataFrame(records)
+
+
+def _style_check_sma_vertical(df: pd.DataFrame):
+    """Green/red on vs-SMA rows in the vertical Check SMA layout."""
+
+    def _hl_row(row: pd.Series) -> list[str]:
+        if row["Metric"] not in ("vs 50-day SMA", "vs 200-day SMA"):
+            return [""] * len(row)
+        styles = ["font-weight: 600"]
+        for col in df.columns[1:]:
+            text = str(row[col])
+            if "Bullish" in text:
+                styles.append("color: #2e7d32; font-weight: 700")
+            elif "Bearish" in text:
+                styles.append("color: #c62828; font-weight: 700")
+            else:
+                styles.append("")
+        return styles
+
+    styled = df.style.apply(_hl_row, axis=1)
+    styled = styled.set_properties(
+        subset=["Metric"],
+        **{"font-weight": "600", "background-color": "rgba(127,127,127,0.06)"},
+    )
+    return styled
 
 
 def resolve_expiration(mm: int, dd: int, available: List[str]) -> str:
@@ -377,6 +945,8 @@ if _prev_live_fetch is not None and _prev_live_fetch != live_fetch:
     get_contract_history.clear()
     get_underlying_history.clear()
     get_watchlist_movers.clear()
+    get_sma_summary_table.clear()
+    lookup_sma_check.clear()
 st.session_state["_prev_live_fetch"] = live_fetch
 
 
@@ -451,18 +1021,22 @@ with st.sidebar.expander("Cache settings", expanded=False):
 st.title("Stock Options Dashboard")
 st.caption(
     "Enter a ticker, option type, expiration (MM/DD) and strike on the left, "
-    "then click **Fetch Data**. Four tabs below: recent activity, 5-day "
-    "forecasts, a Greeks-based what-if calculator, and today's watchlist movers. "
+    "then click **Fetch Data**. Six tabs below: recent activity, 5-day "
+    "forecasts, a Greeks-based what-if calculator, today's watchlist movers, "
+    "a 50/200-day SMA quick summary, a custom SMA checker, and cached contracts. "
     "Data is sourced from Yahoo Finance via yfinance."
 )
 
 # Top-level tabs are defined up-front so the Track-the-Best (watchlist) tab is
 # always rendered, even before the user submits the contract form.
-tab_recent, tab_forecast, tab_whatif, tab_movers = st.tabs([
+tab_recent, tab_forecast, tab_whatif, tab_movers, tab_summary, tab_check_sma, tab_cached = st.tabs([
     "Recent Activity",
     "5-Day Forecasts",
     "What-If Scenario",
     "Track the Best",
+    "Quick Summary",
+    "Check SMA",
+    "Cached Data",
 ])
 
 
@@ -473,8 +1047,9 @@ with tab_movers:
     st.markdown("### Daily Movers — Watchlist")
     st.caption(
         "A quick read on the day's biggest moves across a fixed watchlist. "
-        "Each line shows the percent change between the previous close and "
-        "the latest close, plus the latest closing price."
+        "Each row shows today's move, the closing price, the **20-week MA "
+        "watchout** level, and the weekly trend "
+        "(▲ Bullish in green = above 20-week MA, ▼ Bearish in red = below)."
     )
 
     movers_live = st.checkbox(
@@ -527,51 +1102,67 @@ with tab_movers:
     )
     flat = [r for r in available if r["pct"] == 0]
 
-    if available:
-        latest_bar = max(r["last_bar"] for r in available)
+    _movers_col_config = {
+        "Trend": st.column_config.TextColumn(
+            "Trend",
+            help="▲ Bullish = above 20-week MA. ▼ Bearish = below.",
+            width="small",
+        ),
+        "Stock": st.column_config.TextColumn("Stock", width="small"),
+        "Today's move": st.column_config.TextColumn(
+            "Today's move", width="medium"
+        ),
+        "Closed at": st.column_config.NumberColumn("Closed at", format="$%.2f"),
+        "20 week MA watchout": st.column_config.NumberColumn(
+            "20 week MA watchout",
+            format="$%.2f",
+            help=(
+                "The 20-week moving average — the key level to "
+                "watch. Above = bullish weekly trend, below = bearish."
+            ),
+        ),
+        "Weekly trend": st.column_config.TextColumn(
+            "Weekly trend",
+            help="Streak, 52-week high, and trend commentary.",
+            width="large",
+        ),
+    }
+
+    # Losers first (top), gainers second (bottom) — full width, stacked vertically.
+    st.markdown(f"#### :red[📉 What went down today] ({len(losers)})")
+    if not losers:
         st.caption(
-            f"Latest bar across watchlist: **{latest_bar:%Y-%m-%d}**  ·  "
-            f"Comparing to the previous close."
+            "Nothing in the red today — or no cached data yet. "
+            "Tick **Fetch live data for watchlist** above and click **Refresh**."
+        )
+    else:
+        down_df = _build_movers_table(losers, direction="down")
+        st.dataframe(
+            _style_movers_table(down_df, direction="down"),
+            use_container_width=True,
+            hide_index=True,
+            column_config=_movers_col_config,
         )
 
-    col_up, col_down = st.columns(2)
-
-    with col_up:
-        st.markdown(f"#### :green[📈 What went up today] ({len(gainers)})")
-        if not gainers:
-            st.caption(
-                "Nothing in the green today — or no cached data yet. "
-                "Tick **Fetch live data for watchlist** above and click **Refresh**."
-            )
-        for r in gainers:
-            st.markdown(
-                f"**{r['name']}** ({r['symbol']}) went up "
-                f":green[**+{r['pct']:.2f}%**] and last closed at "
-                f"**${r['close']:,.2f}**  \n"
-                f":gray[Previous close: ${r['prev_close']:,.2f}  ·  "
-                f"Bar date: {r['last_bar']:%Y-%m-%d}]"
-            )
-
-    with col_down:
-        st.markdown(f"#### :red[📉 What went down today] ({len(losers)})")
-        if not losers:
-            st.caption(
-                "Nothing in the red today — or no cached data yet. "
-                "Tick **Fetch live data for watchlist** above and click **Refresh**."
-            )
-        for r in losers:
-            st.markdown(
-                f"**{r['name']}** ({r['symbol']}) went down "
-                f":red[**{r['pct']:.2f}%**] and last closed at "
-                f"**${r['close']:,.2f}**  \n"
-                f":gray[Previous close: ${r['prev_close']:,.2f}  ·  "
-                f"Bar date: {r['last_bar']:%Y-%m-%d}]"
-            )
+    st.markdown(f"#### :green[📈 What went up today] ({len(gainers)})")
+    if not gainers:
+        st.caption(
+            "Nothing in the green today — or no cached data yet. "
+            "Tick **Fetch live data for watchlist** above and click **Refresh**."
+        )
+    else:
+        up_df = _build_movers_table(gainers, direction="up")
+        st.dataframe(
+            _style_movers_table(up_df, direction="up"),
+            use_container_width=True,
+            hide_index=True,
+            column_config=_movers_col_config,
+        )
 
     if flat:
         st.caption(
             "**Flat (0.00%):** "
-            + ", ".join(f"{r['name']} ({r['symbol']})" for r in flat)
+            + ", ".join(r["name"] for r in flat)
         )
 
     if unavailable:
@@ -581,6 +1172,579 @@ with tab_movers:
             + ". Tick **Fetch live data for watchlist** above and click "
             "**Refresh** to download initial history for them."
         )
+
+    # Plain-text version with a one-click copy button — easy to paste into
+    # Slack, email, Notes, etc. without any color codes or markdown bleeding in.
+    if gainers or losers:
+        plain_lines: list[str] = []
+        for r in gainers:
+            label, _ = _trend_label(r.get("trend"))
+            ma_part = ""
+            if r.get("trend") and r["trend"].get("ma20") is not None:
+                ma_part = f" | 20 week MA watchout: ${r['trend']['ma20']:,.2f}"
+            plain_lines.append(
+                f"{label} | {r['name']} went up today by {r['pct']:.2f}% "
+                f"and closed at ${r['close']:,.2f}{ma_part}"
+            )
+            if r.get("trend"):
+                plain_lines.append(r["trend"]["note_plain"])
+            plain_lines.append("")
+        for r in losers:
+            label, _ = _trend_label(r.get("trend"))
+            ma_part = ""
+            if r.get("trend") and r["trend"].get("ma20") is not None:
+                ma_part = f" | 20 week MA watchout: ${r['trend']['ma20']:,.2f}"
+            plain_lines.append(
+                f"{label} | {r['name']} went down today by {abs(r['pct']):.2f}% "
+                f"and closed at ${r['close']:,.2f}{ma_part}"
+            )
+            if r.get("trend"):
+                plain_lines.append(r["trend"]["note_plain"])
+            plain_lines.append("")
+        with st.expander("📋 Copy these lines (plain text)", expanded=False):
+            st.caption(
+                "Click the copy icon in the top-right of the box below — "
+                "the text will paste cleanly into Slack, email, or any app."
+            )
+            st.code("\n".join(plain_lines).rstrip(), language="text")
+
+
+# --------------------------------------------------------------------------- #
+# Quick Summary tab — 50-day & 200-day SMA table
+# --------------------------------------------------------------------------- #
+with tab_summary:
+    st.markdown("### Quick Summary Table")
+    st.caption(
+        "Where each watchlist stock sits vs its **50-day** and **200-day** "
+        "simple moving averages (SMA), including the actual SMA price levels. "
+        "**Above (Bullish)** in green = price is above that SMA. "
+        "**Below (Bearish)** in red = price is below."
+    )
+
+    summary_live = st.checkbox(
+        "Fetch live data for summary",
+        value=False,
+        key="summary_live_fetch",
+        help=(
+            "When **unchecked** (default), uses ONLY locally-cached data on "
+            "disk. Tick this and click **Refresh** to pull the latest closes."
+        ),
+    )
+
+    _prev_summary_live = st.session_state.get("_prev_summary_live")
+    if _prev_summary_live is not None and _prev_summary_live != summary_live:
+        get_sma_summary_table.clear()
+    st.session_state["_prev_summary_live"] = summary_live
+
+    sc1, sc2 = st.columns([1, 4])
+    with sc1:
+        if st.button("Refresh now", use_container_width=True, key="summary_refresh"):
+            get_sma_summary_table.clear()
+            st.rerun()
+    with sc2:
+        if summary_live:
+            st.caption(
+                ":green[**Live mode**] — Yahoo Finance will be called and "
+                "the disk cache will be refreshed."
+            )
+        else:
+            st.caption(
+                ":blue[**Cache-only mode**] — using whatever is already on disk."
+            )
+
+    with st.spinner("Building SMA summary…"):
+        sma_df = get_sma_summary_table(live_fetch=summary_live)
+
+    if sma_df.empty:
+        st.info("No watchlist data available.")
+    else:
+        st.dataframe(
+            _style_sma_table(sma_df),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Stock": st.column_config.TextColumn(
+                    "Stock",
+                    help="Ticker symbol.",
+                    width="small",
+                ),
+                "Price (approx.)": st.column_config.NumberColumn(
+                    "Price (approx.)",
+                    format="$%.0f",
+                    help="Latest closing price (rounded to nearest dollar).",
+                ),
+                "50-day SMA price": st.column_config.NumberColumn(
+                    "50-day SMA price",
+                    format="$%.2f",
+                    help="Current 50-day simple moving average level.",
+                ),
+                "vs 50-day SMA": st.column_config.TextColumn(
+                    "vs 50-day SMA",
+                    help="Medium-term trend — above = bullish, below = bearish.",
+                ),
+                "200-day SMA price": st.column_config.NumberColumn(
+                    "200-day SMA price",
+                    format="$%.2f",
+                    help="Current 200-day simple moving average level.",
+                ),
+                "vs 200-day SMA": st.column_config.TextColumn(
+                    "vs 200-day SMA",
+                    help="Long-term trend — above = bullish, below = bearish.",
+                ),
+                "Overall Trend": st.column_config.TextColumn(
+                    "Overall Trend",
+                    help=(
+                        "Long-term Uptrend = above both. Downtrend = below both. "
+                        "Mixed = above 50-day but below 200-day. "
+                        "Pullback = below 50-day but still above 200-day."
+                    ),
+                ),
+            },
+        )
+
+        # Plain-text copy
+        copy_lines: list[str] = []
+        for _, row in sma_df.iterrows():
+            price = row["Price (approx.)"]
+            price_str = f"${price:,.0f}" if pd.notna(price) else "—"
+            sma50_str = (
+                f"${row['50-day SMA price']:,.2f}"
+                if pd.notna(row.get("50-day SMA price"))
+                else "—"
+            )
+            sma200_str = (
+                f"${row['200-day SMA price']:,.2f}"
+                if pd.notna(row.get("200-day SMA price"))
+                else "—"
+            )
+            copy_lines.append(
+                f"{row['Stock']} | Price: {price_str} | "
+                f"50-day SMA: {sma50_str} ({row['vs 50-day SMA']}) | "
+                f"200-day SMA: {sma200_str} ({row['vs 200-day SMA']}) | "
+                f"Overall: {row['Overall Trend']}"
+            )
+        with st.expander("📋 Copy summary (plain text)", expanded=False):
+            st.code("\n".join(copy_lines), language="text")
+
+
+# --------------------------------------------------------------------------- #
+# Check SMA tab — look up any ticker(s)
+# --------------------------------------------------------------------------- #
+with tab_check_sma:
+    st.markdown("### Check SMA (Simple Moving Average)")
+    st.caption(
+        "Look up **any** stock ticker — one or several at once. "
+        "Uses disk cache by default; tick **Fetch live data** to refresh "
+        "from Yahoo Finance."
+    )
+
+    with st.form("check_sma_form"):
+        check_sma_input = st.text_input(
+            "Stock ticker(s)",
+            value=st.session_state.get("sma_check_input", "NVDA"),
+            placeholder="NVDA  or  NVDA, MSFT, TSLA",
+            help="One ticker, or several separated by commas or spaces.",
+        )
+        check_sma_live = st.checkbox(
+            "Fetch live data",
+            value=st.session_state.get("sma_check_live", False),
+            help=(
+                "When unchecked, reads ONLY from the local disk cache. "
+                "When checked, refreshes from Yahoo Finance and updates the cache."
+            ),
+        )
+        check_sma_submitted = st.form_submit_button(
+            "Look up", use_container_width=True
+        )
+
+    if check_sma_submitted:
+        parsed = _parse_ticker_list(check_sma_input)
+        if not parsed:
+            st.error("Enter at least one valid ticker symbol.")
+        else:
+            st.session_state["sma_check_input"] = check_sma_input
+            st.session_state["sma_check_tickers"] = tuple(parsed)
+            st.session_state["sma_check_live"] = check_sma_live
+            lookup_sma_check.clear()
+
+    _prev_check_live = st.session_state.get("_prev_check_sma_live")
+    if _prev_check_live is not None and _prev_check_live != st.session_state.get(
+        "sma_check_live", False
+    ):
+        lookup_sma_check.clear()
+    st.session_state["_prev_check_sma_live"] = st.session_state.get(
+        "sma_check_live", False
+    )
+
+    if "sma_check_tickers" not in st.session_state:
+        st.info(
+            "Enter a ticker above and click **Look up**. "
+            "Example: `NVDA` or `NVDA, MSFT, AAPL`."
+        )
+    else:
+        tickers = st.session_state["sma_check_tickers"]
+        check_live = st.session_state.get("sma_check_live", False)
+
+        if check_live:
+            st.caption(
+                ":green[**Live mode**] — Yahoo Finance will be called for "
+                f"{len(tickers)} ticker(s)."
+            )
+        else:
+            st.caption(
+                ":blue[**Cache-only mode**] — using whatever is already on disk."
+            )
+
+        with st.spinner(f"Looking up {len(tickers)} ticker(s)…"):
+            check_df = lookup_sma_check(tickers, live_fetch=check_live)
+
+        vertical_df = check_sma_vertical_table(check_df)
+        st.caption(
+            "Metrics run **down** the left — each ticker is its own **column**. "
+            "Scroll sideways if you looked up several tickers at once."
+        )
+        st.dataframe(
+            _style_check_sma_vertical(vertical_df),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Metric": st.column_config.TextColumn(
+                    "Metric",
+                    help="Field name — read down this column.",
+                    width="medium",
+                ),
+                **{
+                    sym: st.column_config.TextColumn(
+                        sym,
+                        help=f"SMA summary for {sym}.",
+                        width="large",
+                    )
+                    for sym in tickers
+                },
+            },
+        )
+
+        st.markdown("#### Weekly trend")
+        st.caption("Word-wrapped for easier reading — one block per ticker.")
+        for _, row in check_df.iterrows():
+            trend_text = row.get("Weekly trend") or "—"
+            above_ma = row.get("_above_50")
+            with st.container(border=True):
+                st.markdown(f"**{row['Stock']}**")
+                if above_ma is True:
+                    st.success(trend_text)
+                elif above_ma is False and pd.notna(row.get("Price (approx.)")):
+                    st.error(trend_text)
+                else:
+                    st.info(trend_text)
+
+        no_data = check_df[
+            check_df["Price (approx.)"].isna()
+        ]["Stock"].tolist()
+        if no_data and not check_live:
+            st.warning(
+                "No cached data for: "
+                + ", ".join(f"`{s}`" for s in no_data)
+                + ". Tick **Fetch live data** and click **Look up** again."
+            )
+
+        copy_check: list[str] = []
+        for _, row in check_df.iterrows():
+            price = row["Price (approx.)"]
+            if pd.isna(price):
+                copy_check.append(f"{row['Stock']} | {row['Overall Trend']}")
+                continue
+            sma50 = row.get("50-day SMA price")
+            sma200 = row.get("200-day SMA price")
+            ma20 = row.get("20 week MA watchout")
+            sma50_str = f"${sma50:,.2f}" if pd.notna(sma50) else "—"
+            sma200_str = f"${sma200:,.2f}" if pd.notna(sma200) else "—"
+            ma20_str = f"${ma20:,.2f}" if pd.notna(ma20) else "—"
+            copy_check.append(
+                f"{row['Stock']} | Price: ${price:,.0f} | "
+                f"50-day SMA: {sma50_str} ({row['vs 50-day SMA']}) | "
+                f"200-day SMA: {sma200_str} ({row['vs 200-day SMA']}) | "
+                f"20 week MA: {ma20_str} | "
+                f"Weekly: {row['Weekly trend']} | "
+                f"Overall: {row['Overall Trend']}"
+            )
+        with st.expander("📋 Copy results (plain text)", expanded=False):
+            st.code("\n".join(copy_check), language="text")
+
+
+# --------------------------------------------------------------------------- #
+# Cached Data tab — browse and re-view previously-fetched option contracts
+# --------------------------------------------------------------------------- #
+with tab_cached:
+    st.markdown("### Cached Option Contracts")
+    st.caption(
+        "Every option contract you've previously fetched is saved on disk. "
+        "Pick one from the list to re-view its recent activity — no network "
+        "call required."
+    )
+
+    cached_contracts = list_cached_contracts()
+
+    if not cached_contracts:
+        st.info(
+            "No cached option contracts on disk yet.\n\n"
+            "Submit the form on the left with **Fetch live data** turned on "
+            "to download a contract — it will then show up here for instant "
+            "re-viewing in cache-only mode."
+        )
+    else:
+        # Summary table
+        cc_df = pd.DataFrame(
+            [
+                {
+                    "Ticker": r["ticker"],
+                    "Type": r["option_type"],
+                    "Strike": r["strike"],
+                    "Expiration": r["expiration"],
+                    "Rows": r["num_rows"],
+                    "Last bar": pd.Timestamp(r["last_bar_date"]).strftime("%Y-%m-%d"),
+                    "Cached on": r["cache_updated_at"].strftime("%Y-%m-%d %H:%M"),
+                    "Size (KB)": r["file_size_kb"],
+                    "Contract symbol": r["contract_symbol"],
+                }
+                for r in cached_contracts
+            ]
+        )
+        st.dataframe(
+            cc_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Strike": st.column_config.NumberColumn(format="$%.2f"),
+                "Rows": st.column_config.NumberColumn(format="%d"),
+                "Size (KB)": st.column_config.NumberColumn(format="%.1f"),
+                "Contract symbol": st.column_config.TextColumn(
+                    help="OCC option symbol — used internally as the cache filename."
+                ),
+            },
+        )
+
+        # Friendly labels for the selectbox
+        labels = {
+            r["contract_symbol"]: (
+                f"{r['ticker']} {r['option_type']} ${r['strike']:g} "
+                f"exp {r['expiration']}  ·  {r['num_rows']} rows  ·  "
+                f"cached {r['cache_updated_at']:%Y-%m-%d %H:%M}"
+            )
+            for r in cached_contracts
+        }
+        selected_symbol = st.selectbox(
+            "Pick a contract to view",
+            options=list(labels.keys()),
+            format_func=lambda s: labels[s],
+            key="cached_data_select",
+        )
+
+        # Render the selected contract
+        sel = next(
+            (r for r in cached_contracts if r["contract_symbol"] == selected_symbol),
+            None,
+        )
+        if sel is not None:
+            st.markdown(
+                f"#### {sel['ticker']} {sel['option_type']} "
+                f"${sel['strike']:g}  ·  exp {sel['expiration']}"
+            )
+            st.caption(
+                f"Contract symbol: `{sel['contract_symbol']}`  ·  "
+                f"Cached on disk · last updated "
+                f"**{sel['cache_updated_at']:%Y-%m-%d %H:%M}**  ·  "
+                f"{sel['num_rows']} rows  ·  last bar "
+                f"**{pd.Timestamp(sel['last_bar_date']):%Y-%m-%d}**"
+            )
+
+            # Always read from disk (cache-only) — fast and avoids network.
+            cached_hist = fcache.disk_cached_history(
+                sel["contract_symbol"], live_fetch=False
+            )
+            # Underlying for both Stock Close alignment AND the weekly trend
+            under_recent = fcache.disk_cached_history(
+                sel["ticker"], live_fetch=False
+            )
+            cd_trend = (
+                weekly_trend_note(sel["ticker"], under_recent)
+                if under_recent is not None and not under_recent.empty
+                else None
+            )
+            if cd_trend is not None:
+                st.markdown(f"##### {sel['ticker']} weekly trend")
+                if cd_trend["above_ma"]:
+                    st.success(cd_trend["note"])
+                else:
+                    st.error(cd_trend["note"])
+            elif under_recent is None or under_recent.empty:
+                st.caption(
+                    f"_No cached `{sel['ticker']}` underlying history on disk — "
+                    "the weekly trend note can't be computed. Submit the form "
+                    "for this ticker once in live mode to populate it._"
+                )
+
+            if cached_hist is None or cached_hist.empty:
+                st.warning("Cache file exists but contains no rows.")
+            else:
+                ch = cached_hist.tail(30).copy()
+                if ch.index.tz is not None:
+                    ch.index = ch.index.tz_localize(None)
+
+                # Try to enrich with the underlying stock close (cache-only)
+                stock_close_aligned = pd.Series(index=ch.index, dtype=float)
+                if under_recent is not None and not under_recent.empty:
+                    stock_close_aligned = under_recent["Close"].reindex(
+                        ch.index, method="ffill"
+                    )
+
+                cd_display = ch[["Open", "High", "Low", "Close", "Volume"]].copy()
+                cd_display.insert(0, "Date", cd_display.index.strftime("%Y-%m-%d"))
+                cd_display["Stock Close"] = stock_close_aligned.values
+                cd_display = cd_display[
+                    ["Date", "Open", "High", "Low", "Close", "Stock Close", "Volume"]
+                ].reset_index(drop=True)
+
+                def _hl(col: pd.Series) -> list[str]:
+                    valid = col.dropna()
+                    if valid.empty or valid.max() == valid.min():
+                        return [""] * len(col)
+                    cmax, cmin = valid.max(), valid.min()
+                    out = []
+                    for v in col:
+                        if pd.isna(v):
+                            out.append("")
+                        elif v == cmax:
+                            out.append(
+                                "background-color: #1e88e5; color: white; "
+                                "font-weight: 600"
+                            )
+                        elif v == cmin:
+                            out.append(
+                                "background-color: #e53935; color: white; "
+                                "font-weight: 600"
+                            )
+                        else:
+                            out.append("")
+                    return out
+
+                styled = (
+                    cd_display.style
+                    .apply(_hl, subset=["Stock Close"])
+                    .format(
+                        {
+                            "Open": "${:,.2f}",
+                            "High": "${:,.2f}",
+                            "Low": "${:,.2f}",
+                            "Close": "${:,.2f}",
+                            "Stock Close": "${:,.2f}",
+                            "Volume": "{:,.0f}",
+                        },
+                        na_rep="—",
+                    )
+                )
+                st.markdown("##### Last 30 trading sessions")
+                st.dataframe(
+                    styled,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Date": st.column_config.TextColumn("Date"),
+                        "Open": st.column_config.NumberColumn("Option Open"),
+                        "High": st.column_config.NumberColumn("Option High"),
+                        "Low": st.column_config.NumberColumn("Option Low"),
+                        "Close": st.column_config.NumberColumn("Option Close"),
+                        "Stock Close": st.column_config.NumberColumn(
+                            f"{sel['ticker']} Close",
+                            help=(
+                                f"{sel['ticker']}'s closing stock price on that "
+                                "day. Highest = blue, lowest = red. Underlying "
+                                "must also be cached on disk."
+                            ),
+                        ),
+                        "Volume": st.column_config.NumberColumn("Volume"),
+                    },
+                )
+
+                # Chart
+                fig_c = make_subplots(
+                    rows=2, cols=1, shared_xaxes=True,
+                    row_heights=[0.75, 0.25], vertical_spacing=0.05,
+                    subplot_titles=("Price (Candlestick + Close)", "Volume"),
+                )
+                fig_c.add_trace(
+                    go.Candlestick(
+                        x=ch.index, open=ch["Open"], high=ch["High"],
+                        low=ch["Low"], close=ch["Close"], name="OHLC",
+                        increasing_line_color="#26a69a",
+                        decreasing_line_color="#ef5350",
+                    ),
+                    row=1, col=1,
+                )
+                fig_c.add_trace(
+                    go.Scatter(
+                        x=ch.index, y=ch["Close"],
+                        mode="lines+markers", name="Close",
+                        line=dict(color="#42a5f5", width=2),
+                        marker=dict(size=6),
+                        hovertemplate=(
+                            "<b>%{x|%Y-%m-%d}</b><br>"
+                            "Close: $%{y:.2f}<extra></extra>"
+                        ),
+                    ),
+                    row=1, col=1,
+                )
+                fig_c.add_trace(
+                    go.Bar(
+                        x=ch.index, y=ch["Volume"], name="Volume",
+                        marker_color="#90a4ae",
+                        hovertemplate=(
+                            "<b>%{x|%Y-%m-%d}</b><br>"
+                            "Volume: %{y:,}<extra></extra>"
+                        ),
+                    ),
+                    row=2, col=1,
+                )
+                fig_c.update_layout(
+                    height=560, hovermode="x unified",
+                    xaxis_rangeslider_visible=False,
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h", yanchor="bottom",
+                        y=1.02, xanchor="right", x=1,
+                    ),
+                    margin=dict(l=10, r=10, t=40, b=10),
+                )
+                fig_c.update_yaxes(title_text="Price (USD)", row=1, col=1)
+                fig_c.update_yaxes(title_text="Volume", row=2, col=1)
+                fig_c.update_xaxes(
+                    rangebreaks=[dict(bounds=["sat", "mon"])], row=2, col=1,
+                )
+                st.plotly_chart(fig_c, use_container_width=True)
+
+                # One-click "load this into the sidebar form" — populates the
+                # form widgets via session_state and reruns so the user can run
+                # forecasts / what-if on this contract without retyping.
+                if st.button(
+                    "Load this contract into the sidebar form",
+                    key="load_cached_into_form",
+                    use_container_width=False,
+                    help=(
+                        "Pre-fills the sidebar with this contract's ticker, "
+                        "type, MM/DD expiration, and strike — then you can "
+                        "click Fetch Data to run forecasts/what-if on it."
+                    ),
+                ):
+                    exp_dt = datetime.strptime(sel["expiration"], "%Y-%m-%d")
+                    st.session_state["fetch_inputs"] = {
+                        "ticker": sel["ticker"],
+                        "option_type": sel["option_type"],
+                        "expiration_input": exp_dt.strftime("%m/%d"),
+                        "mm": exp_dt.month,
+                        "dd": exp_dt.day,
+                        "strike": float(sel["strike"]),
+                    }
+                    st.rerun()
 
 
 # Persist last-submitted form values across reruns so What-If widgets don't
@@ -620,8 +1784,9 @@ if "fetch_inputs" not in st.session_state:
             st.info(
                 "Fill in the form on the left (ticker, option type, "
                 "expiration, strike) and click **Fetch Data** to load this tab. "
-                "The **Track the Best** tab works independently and is "
-                "already populated above."
+                "The **Track the Best**, **Quick Summary**, **Check SMA**, and "
+                "**Cached Data** tabs work independently and are already "
+                "populated above."
             )
     st.stop()
 
@@ -768,6 +1933,30 @@ hist.index = hist.index.tz_localize(None) if hist.index.tz is not None else hist
 # Tab content — tabs were defined up-front near the title.
 # --------------------------------------------------------------------------- #
 with tab_recent:
+    # Pull 1y of underlying history once — used for both the "Stock Close"
+    # column alignment AND the weekly trend note (the latter needs ~5 months
+    # of weekly bars).
+    underlying_recent: pd.DataFrame | None = None
+    try:
+        underlying_recent = get_underlying_history(
+            ticker, period="1y", live_fetch=live_fetch
+        )
+    except Exception:
+        underlying_recent = None
+
+    # Weekly-trend note for the underlying (above 20-week MA, streak, 52-wk high)
+    trend = (
+        weekly_trend_note(ticker, underlying_recent)
+        if underlying_recent is not None and not underlying_recent.empty
+        else None
+    )
+    if trend is not None:
+        st.markdown(f"#### {ticker} weekly trend")
+        if trend["above_ma"]:
+            st.success(trend["note"])
+        else:
+            st.error(trend["note"])
+
     # 7. Table ---------------------------------------------------------------- #
     st.markdown("### Last 30 Trading Sessions")
     st.caption(
@@ -779,16 +1968,10 @@ with tab_recent:
 
     # Pull the underlying stock's close prices for the same dates as `hist`
     stock_close_aligned = pd.Series(index=hist.index, dtype=float)
-    try:
-        underlying_recent = get_underlying_history(
-            ticker, period="3mo", live_fetch=live_fetch
+    if underlying_recent is not None and not underlying_recent.empty:
+        stock_close_aligned = underlying_recent["Close"].reindex(
+            hist.index, method="ffill"
         )
-        if underlying_recent is not None and not underlying_recent.empty:
-            stock_close_aligned = underlying_recent["Close"].reindex(
-                hist.index, method="ffill"
-            )
-    except Exception:
-        pass  # column will show "—" via NaN handling below
 
     display_df = hist[["Open", "High", "Low", "Close", "Volume"]].copy()
     display_df.insert(0, "Date", display_df.index.strftime("%Y-%m-%d"))
