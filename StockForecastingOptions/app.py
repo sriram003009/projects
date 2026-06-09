@@ -48,6 +48,32 @@ st.markdown(
         gap: 6px !important;
     }
 
+    /*
+     * Main dashboard only (8 tabs): 4 columns × 2 rows so tabs are easy to spot.
+     * Inner tab bars (e.g. Forecasts sub-tabs with 4 items) keep the default
+     * single-row flex layout — selected via :has(8th tab) so we don't break them.
+     */
+    .stTabs [data-baseweb="tab-list"]:has([data-baseweb="tab"]:nth-child(8)) {
+        display: grid !important;
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+        gap: 8px !important;
+        width: 100% !important;
+    }
+    .stTabs [data-baseweb="tab-list"]:has([data-baseweb="tab"]:nth-child(8)) [data-baseweb="tab"] {
+        width: 100% !important;
+        min-width: 0 !important;
+        flex: unset !important;
+        padding: 0 10px !important;
+        height: 52px !important;
+        justify-content: center !important;
+    }
+    .stTabs [data-baseweb="tab-list"]:has([data-baseweb="tab"]:nth-child(8)) [data-baseweb="tab"] p {
+        font-size: 0.86rem !important;
+        text-align: center !important;
+        white-space: normal !important;
+        line-height: 1.25 !important;
+    }
+
     /* Default tab styling */
     .stTabs [data-baseweb="tab"] {
         border-radius: 10px !important;
@@ -154,17 +180,31 @@ st.markdown(
         color: white !important;
     }
 
-    /* ---- Tab 7 — WARM STONE (Cached Data) ---- */
+    /* ---- Tab 7 — ROSE (Calls vs Puts) ---- */
     .stTabs [data-baseweb="tab"]:nth-child(7) {
+        background: linear-gradient(135deg, #fce4ec 0%, #f48fb1 100%) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(7) p { color: #880e4f !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(7)[aria-selected="true"] {
+        background: linear-gradient(135deg, #c2185b 0%, #880e4f 100%) !important;
+        border-color: #880e4f !important;
+        box-shadow: 0 4px 14px rgba(136, 14, 79, 0.4) !important;
+    }
+    .stTabs [data-baseweb="tab"]:nth-child(7)[aria-selected="true"] p {
+        color: white !important;
+    }
+
+    /* ---- Tab 8 — WARM STONE (Cached Data) ---- */
+    .stTabs [data-baseweb="tab"]:nth-child(8) {
         background: linear-gradient(135deg, #efebe9 0%, #bcaaa4 100%) !important;
     }
-    .stTabs [data-baseweb="tab"]:nth-child(7) p { color: #4e342e !important; }
-    .stTabs [data-baseweb="tab"]:nth-child(7)[aria-selected="true"] {
+    .stTabs [data-baseweb="tab"]:nth-child(8) p { color: #4e342e !important; }
+    .stTabs [data-baseweb="tab"]:nth-child(8)[aria-selected="true"] {
         background: linear-gradient(135deg, #6d4c41 0%, #4e342e 100%) !important;
         border-color: #4e342e !important;
         box-shadow: 0 4px 14px rgba(78, 52, 46, 0.4) !important;
     }
-    .stTabs [data-baseweb="tab"]:nth-child(7)[aria-selected="true"] p {
+    .stTabs [data-baseweb="tab"]:nth-child(8)[aria-selected="true"] p {
         color: white !important;
     }
     </style>
@@ -433,6 +473,7 @@ WATCHLIST: list[tuple[str, str]] = [
     ("SPY", "SPY"),
     ("META", "Meta"),
     ("MSFT", "Microsoft"),
+    ("AAPL", "Apple"),
     ("AMZN", "Amazon"),
     ("GOOGL", "Google"),
     ("NFLX", "Netflix"),
@@ -841,6 +882,94 @@ def _style_check_sma_vertical(df: pd.DataFrame):
     return styled
 
 
+def _sum_option_column(df: pd.DataFrame | None, col: str) -> int:
+    """Safely sum a numeric column on an option chain DataFrame."""
+    if df is None or df.empty or col not in df.columns:
+        return 0
+    return int(pd.to_numeric(df[col], errors="coerce").fillna(0).sum())
+
+
+def _dominance_verdict(
+    winner: str, call_val: int, put_val: int, metric: str
+) -> str:
+    """Plain-English one-liner for call vs put dominance."""
+    total = call_val + put_val
+    if total == 0:
+        return f"No {metric.lower()} reported for calls or puts on this chain."
+    if winner == "Tied":
+        return f"Calls and puts are **even** on {metric.lower()} — no clear lean."
+    loser_val = put_val if winner == "Calls" else call_val
+    winner_val = call_val if winner == "Calls" else put_val
+    margin_pct = (winner_val - loser_val) / total * 100.0
+    bias = "bullish" if winner == "Calls" else "bearish"
+    return (
+        f"**{winner} dominate** on {metric.lower()}: "
+        f"{winner_val:,} vs {loser_val:,} "
+        f"({margin_pct:.1f}% of total). Leans **{bias}** for this expiration."
+    )
+
+
+def analyze_put_call_balance(
+    calls: pd.DataFrame, puts: pd.DataFrame
+) -> dict:
+    """Aggregate volume & open interest to see whether calls or puts dominate."""
+    call_vol = _sum_option_column(calls, "volume")
+    put_vol = _sum_option_column(puts, "volume")
+    call_oi = _sum_option_column(calls, "openInterest")
+    put_oi = _sum_option_column(puts, "openInterest")
+    call_strikes = len(calls) if calls is not None and not calls.empty else 0
+    put_strikes = len(puts) if puts is not None and not puts.empty else 0
+
+    if call_vol > put_vol:
+        vol_winner = "Calls"
+    elif put_vol > call_vol:
+        vol_winner = "Puts"
+    else:
+        vol_winner = "Tied"
+
+    if call_oi > put_oi:
+        oi_winner = "Calls"
+    elif put_oi > call_oi:
+        oi_winner = "Puts"
+    else:
+        oi_winner = "Tied"
+
+    total_vol = call_vol + put_vol
+    total_oi = call_oi + put_oi
+    pc_ratio_vol = put_vol / call_vol if call_vol > 0 else None
+    pc_ratio_oi = put_oi / call_oi if call_oi > 0 else None
+
+    return {
+        "call_volume": call_vol,
+        "put_volume": put_vol,
+        "call_open_interest": call_oi,
+        "put_open_interest": put_oi,
+        "call_strikes": call_strikes,
+        "put_strikes": put_strikes,
+        "volume_winner": vol_winner,
+        "oi_winner": oi_winner,
+        "call_volume_pct": call_vol / total_vol * 100.0 if total_vol else 0.0,
+        "put_volume_pct": put_vol / total_vol * 100.0 if total_vol else 0.0,
+        "call_oi_pct": call_oi / total_oi * 100.0 if total_oi else 0.0,
+        "put_oi_pct": put_oi / total_oi * 100.0 if total_oi else 0.0,
+        "put_call_ratio_volume": pc_ratio_vol,
+        "put_call_ratio_oi": pc_ratio_oi,
+        "volume_verdict": _dominance_verdict(vol_winner, call_vol, put_vol, "Volume"),
+        "oi_verdict": _dominance_verdict(oi_winner, call_oi, put_oi, "Open interest"),
+    }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_put_call_analysis(
+    ticker: str, expiration: str, live_fetch: bool
+) -> dict | None:
+    """Load option chain and return put/call dominance stats."""
+    calls, puts = get_option_chain(ticker, expiration, live_fetch=live_fetch)
+    if (calls is None or calls.empty) and (puts is None or puts.empty):
+        return None
+    return analyze_put_call_balance(calls, puts)
+
+
 def resolve_expiration(mm: int, dd: int, available: List[str]) -> str:
     """Map MM/DD to the soonest matching real expiration date.
 
@@ -947,6 +1076,7 @@ if _prev_live_fetch is not None and _prev_live_fetch != live_fetch:
     get_watchlist_movers.clear()
     get_sma_summary_table.clear()
     lookup_sma_check.clear()
+    fetch_put_call_analysis.clear()
 st.session_state["_prev_live_fetch"] = live_fetch
 
 
@@ -1021,21 +1151,28 @@ with st.sidebar.expander("Cache settings", expanded=False):
 st.title("Stock Options Dashboard")
 st.caption(
     "Enter a ticker, option type, expiration (MM/DD) and strike on the left, "
-    "then click **Fetch Data**. Six tabs below: recent activity, 5-day "
+    "then click **Fetch Data**. Eight tabs in two rows (4 + 4): recent activity, 5-day "
     "forecasts, a Greeks-based what-if calculator, today's watchlist movers, "
-    "a 50/200-day SMA quick summary, a custom SMA checker, and cached contracts. "
+    "a 50/200-day SMA quick summary, a custom SMA checker, calls-vs-puts "
+    "dominance, and cached contracts. "
     "Data is sourced from Yahoo Finance via yfinance."
 )
 
 # Top-level tabs are defined up-front so the Track-the-Best (watchlist) tab is
 # always rendered, even before the user submits the contract form.
-tab_recent, tab_forecast, tab_whatif, tab_movers, tab_summary, tab_check_sma, tab_cached = st.tabs([
+# Layout (CSS grid 4×2): row 1 = contract tools, row 2 = watchlist & scanners.
+st.caption(
+    "**Row 1 — Contract:** Recent Activity · 5-Day Forecasts · What-If · Track the Best  \n"
+    "**Row 2 — Scanners:** Quick Summary · Check SMA · Calls vs Puts · Cached Data"
+)
+tab_recent, tab_forecast, tab_whatif, tab_movers, tab_summary, tab_check_sma, tab_pcr, tab_cached = st.tabs([
     "Recent Activity",
     "5-Day Forecasts",
     "What-If Scenario",
     "Track the Best",
     "Quick Summary",
     "Check SMA",
+    "Calls vs Puts",
     "Cached Data",
 ])
 
@@ -1473,6 +1610,307 @@ with tab_check_sma:
 
 
 # --------------------------------------------------------------------------- #
+# Calls vs Puts tab — put/call dominance for any ticker + expiration
+# --------------------------------------------------------------------------- #
+with tab_pcr:
+    st.markdown("### Calls vs Puts — Who Dominates?")
+    st.caption(
+        "Compare how many **calls** vs **puts** traded (volume) and how many "
+        "are still open (open interest) for a chosen expiration. "
+        "Defaults to **SPY** — change the ticker if you like."
+    )
+
+    with st.expander("How to read this (30-second guide)", expanded=False):
+        st.markdown(textwrap.dedent("""
+            - **Volume** = contracts traded in the latest session (today's activity).
+            - **Open interest** = total contracts still open (longer-term positioning).
+            - **More calls** → traders leaning **bullish** (betting the stock goes up).
+            - **More puts** → traders leaning **bearish** (betting it goes down).
+            - **Put/Call ratio** = puts ÷ calls. Above **1.0** = puts dominate.
+              Below **1.0** = calls dominate.
+
+            This is a **sentiment snapshot**, not a buy/sell signal on its own —
+            use it alongside price, SMA trends, and your own plan.
+        """).strip())
+
+    with st.form("pcr_form"):
+        pcr_ticker = st.text_input(
+            "Ticker",
+            value=st.session_state.get("pcr_ticker", "SPY"),
+            help="e.g. SPY, QQQ, AAPL",
+        )
+        pcr_exp_input = st.text_input(
+            "Expiration (MM/DD)",
+            value=st.session_state.get("pcr_exp_input", ""),
+            placeholder="e.g. 06/20",
+            help="Option expiration date in month/day format.",
+        )
+        pcr_live = st.checkbox(
+            "Fetch live data",
+            value=st.session_state.get("pcr_live", False),
+            help="Unchecked = disk cache only. Checked = refresh chain from Yahoo Finance.",
+        )
+        pcr_submitted = st.form_submit_button("Analyze", use_container_width=True)
+
+    if pcr_submitted:
+        pcr_t = pcr_ticker.strip().upper()
+        if not pcr_t:
+            st.error("Enter a ticker symbol.")
+        elif not MMDD_RE.match(pcr_exp_input.strip()):
+            st.error("Expiration must be in MM/DD format (e.g. `06/20`).")
+        else:
+            st.session_state["pcr_ticker"] = pcr_t
+            st.session_state["pcr_exp_input"] = pcr_exp_input.strip()
+            st.session_state["pcr_live"] = pcr_live
+            st.session_state["pcr_ready"] = True
+            fetch_put_call_analysis.clear()
+
+    _prev_pcr_live = st.session_state.get("_prev_pcr_live")
+    if _prev_pcr_live is not None and _prev_pcr_live != st.session_state.get(
+        "pcr_live", False
+    ):
+        fetch_put_call_analysis.clear()
+    st.session_state["_prev_pcr_live"] = st.session_state.get("pcr_live", False)
+
+    if not st.session_state.get("pcr_ready"):
+        st.info(
+            "Enter a ticker (default **SPY**), an expiration like **06/20**, "
+            "and click **Analyze**."
+        )
+    else:
+        pcr_t = st.session_state["pcr_ticker"]
+        pcr_exp_raw = st.session_state["pcr_exp_input"]
+        pcr_mm, pcr_dd = (int(x) for x in pcr_exp_raw.split("/"))
+        pcr_live_flag = st.session_state.get("pcr_live", False)
+
+        if pcr_live_flag:
+            st.caption(":green[**Live mode**] — refreshing option chain from Yahoo Finance.")
+        else:
+            st.caption(":blue[**Cache-only mode**] — using cached chain if available.")
+
+        with st.spinner(f"Loading expirations for {pcr_t}…"):
+            try:
+                pcr_exps = get_expirations(pcr_t, live_fetch=pcr_live_flag)
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not fetch expirations for `{pcr_t}`: {exc}")
+                pcr_exps = []
+
+        if not pcr_exps:
+            if not pcr_live_flag:
+                st.warning(
+                    f"No cached expirations for `{pcr_t}`. "
+                    "Tick **Fetch live data** and click **Analyze** again."
+                )
+            else:
+                st.error(f"`{pcr_t}` has no listed options on Yahoo Finance.")
+        else:
+            try:
+                pcr_exp_date = resolve_expiration(pcr_mm, pcr_dd, pcr_exps)
+            except ValueError:
+                upcoming = nearest_expirations(pcr_exps)
+                st.error(
+                    f"No expiration matches **{pcr_exp_raw}** for `{pcr_t}`. "
+                    "Nearest: " + ", ".join(f"`{d}`" for d in upcoming)
+                )
+                pcr_exp_date = None
+
+            if pcr_exp_date:
+                st.markdown(
+                    f"#### {pcr_t}  ·  expiration **{pcr_exp_date}**"
+                )
+
+                with st.spinner("Summing calls and puts across all strikes…"):
+                    pcr_stats = fetch_put_call_analysis(
+                        pcr_t, pcr_exp_date, pcr_live_flag
+                    )
+                    pcr_calls, pcr_puts = get_option_chain(
+                        pcr_t, pcr_exp_date, live_fetch=pcr_live_flag
+                    )
+
+                if pcr_stats is None:
+                    if not pcr_live_flag:
+                        st.warning(
+                            f"No cached option chain for `{pcr_t}` exp "
+                            f"{pcr_exp_date}. Tick **Fetch live data** and "
+                            "click **Analyze** again."
+                        )
+                    else:
+                        st.error("Empty option chain returned.")
+                else:
+                    s = pcr_stats
+                    # Headline banner
+                    if s["volume_winner"] == "Calls":
+                        st.success(
+                            f"📈 **Calls dominate** on volume for {pcr_t} "
+                            f"exp {pcr_exp_date} — bullish lean."
+                        )
+                    elif s["volume_winner"] == "Puts":
+                        st.error(
+                            f"📉 **Puts dominate** on volume for {pcr_t} "
+                            f"exp {pcr_exp_date} — bearish lean."
+                        )
+                    else:
+                        st.info("Calls and puts are tied on volume — no clear lean.")
+
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Call volume", f"{s['call_volume']:,}")
+                    m2.metric("Put volume", f"{s['put_volume']:,}")
+                    m3.metric(
+                        "Put/Call ratio (vol)",
+                        f"{s['put_call_ratio_volume']:.2f}"
+                        if s["put_call_ratio_volume"] is not None
+                        else "—",
+                        help="Puts ÷ calls by volume. >1 = puts dominate.",
+                    )
+                    m4.metric(
+                        "Put/Call ratio (OI)",
+                        f"{s['put_call_ratio_oi']:.2f}"
+                        if s["put_call_ratio_oi"] is not None
+                        else "—",
+                        help="Puts ÷ calls by open interest.",
+                    )
+
+                    st.markdown(s["volume_verdict"])
+                    st.markdown(s["oi_verdict"])
+
+                    # Comparison table
+                    cmp_df = pd.DataFrame(
+                        [
+                            {
+                                "Metric": "Volume (contracts traded)",
+                                "Calls": s["call_volume"],
+                                "Puts": s["put_volume"],
+                                "Dominates": s["volume_winner"],
+                            },
+                            {
+                                "Metric": "Open interest (still open)",
+                                "Calls": s["call_open_interest"],
+                                "Puts": s["put_open_interest"],
+                                "Dominates": s["oi_winner"],
+                            },
+                            {
+                                "Metric": "Listed strikes",
+                                "Calls": s["call_strikes"],
+                                "Puts": s["put_strikes"],
+                                "Dominates": "—",
+                            },
+                        ]
+                    )
+                    st.dataframe(
+                        cmp_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Calls": st.column_config.NumberColumn(format="%d"),
+                            "Puts": st.column_config.NumberColumn(format="%d"),
+                        },
+                    )
+
+                    # Charts — volume & OI side by side
+                    fig_pcr = make_subplots(
+                        rows=1, cols=2,
+                        subplot_titles=("Volume", "Open interest"),
+                        specs=[[{"type": "bar"}, {"type": "bar"}]],
+                    )
+                    fig_pcr.add_trace(
+                        go.Bar(
+                            x=["Calls", "Puts"],
+                            y=[s["call_volume"], s["put_volume"]],
+                            marker_color=["#26a69a", "#ef5350"],
+                            text=[f"{s['call_volume']:,}", f"{s['put_volume']:,}"],
+                            textposition="outside",
+                            name="Volume",
+                        ),
+                        row=1, col=1,
+                    )
+                    fig_pcr.add_trace(
+                        go.Bar(
+                            x=["Calls", "Puts"],
+                            y=[s["call_open_interest"], s["put_open_interest"]],
+                            marker_color=["#26a69a", "#ef5350"],
+                            text=[
+                                f"{s['call_open_interest']:,}",
+                                f"{s['put_open_interest']:,}",
+                            ],
+                            textposition="outside",
+                            name="Open interest",
+                            showlegend=False,
+                        ),
+                        row=1, col=2,
+                    )
+                    fig_pcr.update_layout(
+                        height=380,
+                        margin=dict(l=10, r=10, t=40, b=10),
+                        showlegend=False,
+                    )
+                    fig_pcr.update_yaxes(title_text="Contracts", row=1, col=1)
+                    fig_pcr.update_yaxes(title_text="Contracts", row=1, col=2)
+                    st.plotly_chart(fig_pcr, use_container_width=True)
+
+                    # Top strikes by volume (where the action is)
+                    st.markdown("#### Where is the action? — Top strikes by volume")
+                    tc1, tc2 = st.columns(2)
+                    with tc1:
+                        st.markdown("**Top call strikes**")
+                        if pcr_calls is not None and not pcr_calls.empty and "volume" in pcr_calls.columns:
+                            top_calls = (
+                                pcr_calls[["strike", "volume", "openInterest", "lastPrice"]]
+                                .sort_values("volume", ascending=False)
+                                .head(10)
+                                .reset_index(drop=True)
+                            )
+                            st.dataframe(
+                                top_calls,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "strike": st.column_config.NumberColumn(format="$%.2f"),
+                                    "volume": st.column_config.NumberColumn(format="%d"),
+                                    "openInterest": st.column_config.NumberColumn("Open int", format="%d"),
+                                    "lastPrice": st.column_config.NumberColumn("Last", format="$%.2f"),
+                                },
+                            )
+                        else:
+                            st.caption("No call volume data.")
+                    with tc2:
+                        st.markdown("**Top put strikes**")
+                        if pcr_puts is not None and not pcr_puts.empty and "volume" in pcr_puts.columns:
+                            top_puts = (
+                                pcr_puts[["strike", "volume", "openInterest", "lastPrice"]]
+                                .sort_values("volume", ascending=False)
+                                .head(10)
+                                .reset_index(drop=True)
+                            )
+                            st.dataframe(
+                                top_puts,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "strike": st.column_config.NumberColumn(format="$%.2f"),
+                                    "volume": st.column_config.NumberColumn(format="%d"),
+                                    "openInterest": st.column_config.NumberColumn("Open int", format="%d"),
+                                    "lastPrice": st.column_config.NumberColumn("Last", format="$%.2f"),
+                                },
+                            )
+                        else:
+                            st.caption("No put volume data.")
+
+                    pcr_plain = (
+                        f"{pcr_t} exp {pcr_exp_date} | "
+                        f"Call vol: {s['call_volume']:,} | "
+                        f"Put vol: {s['put_volume']:,} | "
+                        f"Vol dominates: {s['volume_winner']} | "
+                        f"P/C ratio (vol): "
+                        f"{s['put_call_ratio_volume']:.2f} | "
+                        f"Call OI: {s['call_open_interest']:,} | "
+                        f"Put OI: {s['put_open_interest']:,} | "
+                        f"OI dominates: {s['oi_winner']}"
+                    )
+                    with st.expander("📋 Copy summary (plain text)", expanded=False):
+                        st.code(pcr_plain, language="text")
+
+
+# --------------------------------------------------------------------------- #
 # Cached Data tab — browse and re-view previously-fetched option contracts
 # --------------------------------------------------------------------------- #
 with tab_cached:
@@ -1784,9 +2222,9 @@ if "fetch_inputs" not in st.session_state:
             st.info(
                 "Fill in the form on the left (ticker, option type, "
                 "expiration, strike) and click **Fetch Data** to load this tab. "
-                "The **Track the Best**, **Quick Summary**, **Check SMA**, and "
-                "**Cached Data** tabs work independently and are already "
-                "populated above."
+                "The **Track the Best**, **Quick Summary**, **Check SMA**, "
+                "**Calls vs Puts**, and **Cached Data** tabs work independently "
+                "and are already populated above."
             )
     st.stop()
 
