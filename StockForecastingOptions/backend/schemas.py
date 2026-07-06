@@ -36,6 +36,20 @@ class SmaCheckRequest(BaseModel):
     live_fetch: bool = False
 
 
+class TomorrowWatchlistAddRequest(BaseModel):
+    ticker: str = Field(..., min_length=1, description="Stock ticker to watch tomorrow")
+
+
+class WeekdaySessionsRequest(BaseModel):
+    ticker: str = Field(..., min_length=1)
+    weekday: str = Field(
+        ...,
+        description="Monday, Tuesday, Wednesday, Thursday, or Friday",
+    )
+    sessions: int = Field(10, ge=1, le=52)
+    live_fetch: bool = False
+
+
 class CacheClearRequest(BaseModel):
     confirm: bool = False
     symbol: str | None = None

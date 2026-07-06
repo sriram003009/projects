@@ -20,6 +20,8 @@ from backend.schemas import (
     ContractRequest,
     PutCallRequest,
     SmaCheckRequest,
+    TomorrowWatchlistAddRequest,
+    WeekdaySessionsRequest,
     WhatIfRequest,
 )
 from services import analytics as biz
@@ -33,6 +35,8 @@ from services.contract_service import (
 )
 from services.messages import LIVE_FETCH_HINT
 from services.serialize import clean_dict, df_to_records
+from services import tomorrow_watchlist as tw
+from services import weekday_sessions as wds
 
 app = FastAPI(
     title="Options Lookup API",
@@ -67,6 +71,13 @@ def _http_error(exc: ServiceError) -> HTTPException:
         "no_history": 404,
         "no_cache": 404,
         "invalid_symbol": 400,
+        "duplicate_ticker": 409,
+        "invalid_ticker": 400,
+        "not_found": 404,
+        "invalid_weekday": 400,
+        "no_weekday_sessions": 404,
+        "invalid_history": 400,
+        "history_failed": 400,
     }.get(exc.code, 400)
     return HTTPException(
         status_code=status,
@@ -137,6 +148,42 @@ def watchlist_summary(live_fetch: bool = Query(False)) -> dict[str, Any]:
         "rows": df_to_records(display),
         "raw": df_to_records(df),
     }
+
+
+@app.get("/api/tomorrow-watchlist")
+def tomorrow_watchlist_get(live_fetch: bool = Query(False)) -> dict[str, Any]:
+    """User watchlist for tomorrow with 50/200-day MA Bullish/Bearish signal."""
+    return tw.get_watchlist_analysis(live_fetch=live_fetch)
+
+
+@app.post("/api/tomorrow-watchlist")
+def tomorrow_watchlist_add(body: TomorrowWatchlistAddRequest) -> dict[str, Any]:
+    try:
+        return tw.add_symbol(body.ticker)
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.delete("/api/tomorrow-watchlist/{symbol}")
+def tomorrow_watchlist_remove(symbol: str) -> dict[str, Any]:
+    try:
+        return tw.remove_symbol(symbol)
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.post("/api/weekday-sessions")
+def weekday_sessions(body: WeekdaySessionsRequest) -> dict[str, Any]:
+    """Last N Mon–Fri sessions: Prev Close, High, Low, Close."""
+    try:
+        return wds.get_weekday_sessions(
+            body.ticker,
+            body.weekday,
+            sessions=body.sessions,
+            live_fetch=body.live_fetch,
+        )
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
 
 
 @app.post("/api/sma/check")

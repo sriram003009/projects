@@ -11,6 +11,8 @@ import {
   RecentActivityTab,
   TrackBestTab,
   WhatIfTab,
+  StocksOnWatchlistTab,
+  WeekdaySessionsTab,
 } from './components/TabPanels'
 import type { ContractForm, ContractLookup } from './types'
 import './App.css'
@@ -20,6 +22,8 @@ const TABS = [
   { id: 'forecast', label: '5-Day Forecasts', row: 1, color: 'tab-orange' },
   { id: 'whatif', label: 'What-If Scenario', row: 1, color: 'tab-purple' },
   { id: 'movers', label: 'Track the Best', row: 1, color: 'tab-green' },
+  { id: 'weekday', label: 'Weekday Sessions', row: 2, color: 'tab-cyan' },
+  { id: 'watchlist', label: 'Stocks on Watchlist', row: 2, color: 'tab-amber' },
   { id: 'summary', label: 'Quick Summary', row: 2, color: 'tab-teal' },
   { id: 'sma', label: 'Check SMA', row: 2, color: 'tab-indigo' },
   { id: 'pcr', label: 'Calls vs Puts', row: 2, color: 'tab-rose' },
@@ -130,7 +134,7 @@ function App() {
           <p className="caption">
             <strong>Row 1 — Contract:</strong> Recent Activity · 5-Day Forecasts · What-If · Track the Best
             <br />
-            <strong>Row 2 — Scanners:</strong> Quick Summary · Check SMA · Calls vs Puts · Cached Data
+            <strong>Row 2 — Scanners:</strong> Weekday Sessions · Stocks on Watchlist · Quick Summary · Check SMA · Calls vs Puts · Cached Data
           </p>
         </header>
 
@@ -157,6 +161,8 @@ function App() {
           {activeTab === 'forecast' && <ForecastsTab form={form} contract={contract} />}
           {activeTab === 'whatif' && <WhatIfTab form={form} contract={contract} />}
           {activeTab === 'movers' && <TrackBestTab />}
+          {activeTab === 'weekday' && <WeekdaySessionsTab />}
+          {activeTab === 'watchlist' && <StocksOnWatchlistTab />}
           {activeTab === 'summary' && <QuickSummaryTab />}
           {activeTab === 'sma' && <CheckSmaTab />}
           {activeTab === 'pcr' && <CallsPutsTab />}

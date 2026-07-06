@@ -73,6 +73,16 @@ body {
   border-radius: 14px;
 }
 
+/* 9 tabs → 3×3 grid */
+.tab-grid:has(.tab-btn:nth-child(9):last-child) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 10 tabs → 5×2 grid */
+.tab-grid:has(.tab-btn:nth-child(10)) {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .tab-btn {
   border: 2px solid transparent;
   border-radius: 10px;
@@ -102,6 +112,8 @@ body {
 .tab-indigo { background: linear-gradient(135deg, #e8eaf6, #9fa8da); color: #1a237e; }
 .tab-rose { background: linear-gradient(135deg, #fce4ec, #f48fb1); color: #880e4f; }
 .tab-stone { background: linear-gradient(135deg, #efebe9, #bcaaa4); color: #4e342e; }
+.tab-amber { background: linear-gradient(135deg, #fff8e1, #ffca28); color: #ff6f00; }
+.tab-cyan { background: linear-gradient(135deg, #e0f7fa, #4dd0e1); color: #006064; }
 
 .tab-btn.active.tab-blue { background: linear-gradient(135deg, #1976d2, #0d47a1); color: #fff; }
 .tab-btn.active.tab-orange { background: linear-gradient(135deg, #f57c00, #e65100); color: #fff; }
@@ -111,6 +123,96 @@ body {
 .tab-btn.active.tab-indigo { background: linear-gradient(135deg, #3949ab, #1a237e); color: #fff; }
 .tab-btn.active.tab-rose { background: linear-gradient(135deg, #c2185b, #880e4f); color: #fff; }
 .tab-btn.active.tab-stone { background: linear-gradient(135deg, #6d4c41, #4e342e); color: #fff; }
+.tab-btn.active.tab-amber { background: linear-gradient(135deg, #ff8f00, #e65100); color: #fff; }
+.tab-btn.active.tab-cyan { background: linear-gradient(135deg, #00838f, #006064); color: #fff; }
+
+.signal-pill {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.signal-bullish { background: #e8f5e9; color: #1b5e20; }
+.signal-bearish { background: #ffebee; color: #c62828; }
+.signal-mixed { background: #fff8e1; color: #e65100; }
+.signal-unknown { background: #eceff1; color: #546e7a; }
+
+.btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.watchlist-table td,
+.watchlist-table th {
+  vertical-align: middle;
+}
+
+.weekday-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.35rem;
+  color: #64748b;
+}
+
+.weekday-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.weekday-btn {
+  min-width: 3.5rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  border: 2px solid #ccd4e0;
+  background: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.weekday-btn.active {
+  background: #00838f;
+  border-color: #006064;
+  color: #fff;
+}
+
+.weekday-table table {
+  font-variant-numeric: tabular-nums;
+}
+
+.weekday-table .close-up {
+  color: #1b5e20;
+  font-weight: 700;
+  background: #e8f5e9;
+}
+
+.weekday-table .close-down {
+  color: #c62828;
+  font-weight: 700;
+  background: #ffebee;
+}
+
+.weekday-table .close-flat {
+  color: #546e7a;
+}
+
+.weekday-table .close-delta {
+  font-weight: 600;
+  font-size: 0.88em;
+}
+
+.close-up-inline {
+  color: #1b5e20;
+  font-weight: 700;
+}
+
+.close-down-inline {
+  color: #c62828;
+  font-weight: 700;
+}
 
 .tab-panel {
   background: #fff;

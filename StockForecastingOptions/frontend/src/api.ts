@@ -63,6 +63,41 @@ export interface CacheSummary {
   total_kb?: number
 }
 
+export interface TomorrowWatchlistResponse {
+  symbols: string[]
+  live_fetch?: boolean
+  data_source?: string
+  cache_hint?: string | null
+  rows: TomorrowWatchlistRow[]
+}
+
+export interface TomorrowWatchlistRow {
+  Stock: string
+  'Price (approx.)'?: number | null
+  '50-day SMA price'?: number | null
+  'vs 50-day SMA'?: string
+  '200-day SMA price'?: number | null
+  'vs 200-day SMA'?: string
+  'MA Signal'?: string
+  'Overall Trend'?: string
+}
+
+export interface WeekdaySessionsResponse {
+  ticker: string
+  weekday: string
+  sessions_returned: number
+  live_fetch?: boolean
+  data_source?: string
+  rows: {
+    Date: string
+    Weekday: string
+    'Prev Close': number | null
+    High: number
+    Low: number
+    Close: number
+  }[]
+}
+
 export const api = {
   health: () => request<{ status: string }>('/api/health'),
 
@@ -112,6 +147,39 @@ export const api = {
 
   movers: (liveFetch: boolean) =>
     request<MoversResponse>(`/api/watchlist/movers?live_fetch=${liveFetch}`),
+
+  tomorrowWatchlist: (liveFetch: boolean) =>
+    request<TomorrowWatchlistResponse>(
+      `/api/tomorrow-watchlist?live_fetch=${liveFetch}`,
+    ),
+
+  addTomorrowWatchlist: (ticker: string) =>
+    request<{ symbol: string; symbols: string[] }>('/api/tomorrow-watchlist', {
+      method: 'POST',
+      body: JSON.stringify({ ticker }),
+    }),
+
+  removeTomorrowWatchlist: (symbol: string) =>
+    request<{ symbol: string; symbols: string[] }>(
+      `/api/tomorrow-watchlist/${encodeURIComponent(symbol)}`,
+      { method: 'DELETE' },
+    ),
+
+  weekdaySessions: (
+    ticker: string,
+    weekday: string,
+    liveFetch: boolean,
+    sessions = 10,
+  ) =>
+    request<WeekdaySessionsResponse>('/api/weekday-sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        ticker,
+        weekday,
+        sessions,
+        live_fetch: liveFetch,
+      }),
+    }),
 
   summary: (liveFetch: boolean) =>
     request<SummaryResponse>(`/api/watchlist/summary?live_fetch=${liveFetch}`),

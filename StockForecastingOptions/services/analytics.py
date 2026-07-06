@@ -356,6 +356,23 @@ def _overall_sma_trend(above_50: bool, above_200: bool) -> str:
     return "Pullback"
 
 
+def ma_signal_label(above_50: bool | None, above_200: bool | None) -> str:
+    """Bullish / Bearish / Mixed from 50-day and 200-day moving averages.
+
+    - **Bullish** — price above both the 50-day and 200-day SMA
+    - **Bearish** — price below both SMAs
+    - **Mixed** — above one but not the other (or partial data on one SMA)
+    - **Unknown** — not enough cached history
+    """
+    if above_50 is True and above_200 is True:
+        return "Bullish"
+    if above_50 is False and above_200 is False:
+        return "Bearish"
+    if above_50 is None and above_200 is None:
+        return "Unknown"
+    return "Mixed"
+
+
 def get_sma_summary_table(live_fetch: bool) -> pd.DataFrame:
     """50-day / 200-day SMA quick summary for every ticker in WATCHLIST."""
     records: list[dict] = []

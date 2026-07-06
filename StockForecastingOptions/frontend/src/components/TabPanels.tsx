@@ -484,6 +484,319 @@ export function CallsPutsTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Weekday sessions — last 10 Mon/Tue/Wed/Thu/Fri bars
+// ---------------------------------------------------------------------------
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const
+type WeekdayName = (typeof WEEKDAYS)[number]
+
+function formatMoney(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return '—'
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function formatDelta(delta: number): string {
+  const sign = delta >= 0 ? '+' : '−'
+  return `${sign}$${Math.abs(delta).toFixed(2)}`
+}
+
+function formatCloseChange(delta: number, prevClose: number): string {
+  const pct = (delta / prevClose) * 100
+  const pctSign = pct >= 0 ? '+' : '−'
+  return `${formatDelta(delta)} (${pctSign}${Math.abs(pct).toFixed(2)}%)`
+}
+
+function closeDirection(
+  close: number,
+  prevClose: number | null,
+): 'up' | 'down' | 'flat' | 'unknown' {
+  if (prevClose == null || Number.isNaN(prevClose)) return 'unknown'
+  if (close > prevClose) return 'up'
+  if (close < prevClose) return 'down'
+  return 'flat'
+}
+
+function WeekdaySessionsTable({
+  rows,
+}: {
+  rows: import('../api').WeekdaySessionsResponse['rows']
+}) {
+  if (!rows.length) return <p className="muted">No sessions.</p>
+
+  return (
+    <div className="table-wrap weekday-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Weekday</th>
+            <th>Prev Close</th>
+            <th>High</th>
+            <th>Low</th>
+            <th>Close</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const dir = closeDirection(row.Close, row['Prev Close'])
+            const delta =
+              row['Prev Close'] != null ? row.Close - row['Prev Close'] : null
+            return (
+              <tr key={row.Date}>
+                <td>{row.Date}</td>
+                <td>{row.Weekday}</td>
+                <td>{formatMoney(row['Prev Close'])}</td>
+                <td>{formatMoney(row.High)}</td>
+                <td>{formatMoney(row.Low)}</td>
+                <td
+                  className={
+                    dir === 'up'
+                      ? 'close-up'
+                      : dir === 'down'
+                        ? 'close-down'
+                        : 'close-flat'
+                  }
+                >
+                  {formatMoney(row.Close)}
+                  {dir === 'up' && delta != null && row['Prev Close'] != null && (
+                    <span className="close-delta">
+                      {' '}
+                      ▲ {formatCloseChange(delta, row['Prev Close'])}
+                    </span>
+                  )}
+                  {dir === 'down' && delta != null && row['Prev Close'] != null && (
+                    <span className="close-delta">
+                      {' '}
+                      ▼ {formatCloseChange(delta, row['Prev Close'])}
+                    </span>
+                  )}
+                  {dir === 'flat' && <span className="close-delta"> — unchanged</span>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+export function WeekdaySessionsTab() {
+  const [ticker, setTicker] = useState('SPY')
+  const [weekday, setWeekday] = useState<WeekdayName>('Monday')
+  const [live, setLive] = useState(false)
+  const [data, setData] = useState<import('../api').WeekdaySessionsResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    setError(null)
+    api
+      .weekdaySessions(ticker, weekday, live, 10)
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  return (
+    <div>
+      <h3>Weekday Sessions — Prev Close, High, Low, Close</h3>
+      <p className="muted">
+        Pull the last <strong>10 sessions</strong> for a chosen weekday (Mon–Fri only).
+        <strong> Prev Close</strong> is the prior trading day&apos;s close before each session.
+        <strong> Close</strong> is <span className="close-up-inline">green</span> when above prev close,{' '}
+        <span className="close-down-inline">red</span> when below.
+      </p>
+
+      <DataModeBanner live={live} />
+
+      <div className="form-row">
+        <label>
+          Ticker
+          <input
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            placeholder="SPY"
+          />
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+          Fetch live data
+        </label>
+        <button type="button" className="btn primary" onClick={load} disabled={loading}>
+          {loading ? 'Loading…' : 'Pull sessions'}
+        </button>
+      </div>
+
+      <p className="weekday-label">Select weekday</p>
+      <div className="weekday-buttons">
+        {WEEKDAYS.map((day) => (
+          <button
+            key={day}
+            type="button"
+            className={`weekday-btn ${weekday === day ? 'active' : ''}`}
+            onClick={() => setWeekday(day)}
+          >
+            {day.slice(0, 3)}
+          </button>
+        ))}
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {data && (
+        <>
+          <p className="muted">
+            {data.ticker} · {data.weekday} · {data.sessions_returned} session(s) ·{' '}
+            {data.data_source === 'live' ? 'live' : 'cache'}
+          </p>
+          <WeekdaySessionsTable rows={data.rows} />
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Stocks on Watchlist — user list for tomorrow + 50/200 MA signal
+// ---------------------------------------------------------------------------
+function signalClass(signal: string | undefined): string {
+  if (signal === 'Bullish') return 'signal-bullish'
+  if (signal === 'Bearish') return 'signal-bearish'
+  if (signal === 'Mixed') return 'signal-mixed'
+  return 'signal-unknown'
+}
+
+export function StocksOnWatchlistTab() {
+  const [live, setLive] = useState(false)
+  const [input, setInput] = useState('')
+  const [data, setData] = useState<import('../api').TomorrowWatchlistResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+
+  const load = () => {
+    setError(null)
+    api
+      .tomorrowWatchlist(live)
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+  }
+
+  useEffect(() => {
+    load()
+  }, [live])
+
+  const addTicker = () => {
+    const t = input.trim().toUpperCase()
+    if (!t) return
+    setAdding(true)
+    setError(null)
+    api
+      .addTomorrowWatchlist(t)
+      .then(() => {
+        setInput('')
+        load()
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setAdding(false))
+  }
+
+  const removeTicker = (symbol: string) => {
+    setError(null)
+    api
+      .removeTomorrowWatchlist(symbol)
+      .then(load)
+      .catch((e: Error) => setError(e.message))
+  }
+
+  return (
+    <div>
+      <h3>Stocks on Watchlist — for tomorrow</h3>
+      <p className="muted">
+        Build your personal list. Each row shows whether price is{' '}
+        <strong>Bullish</strong> (above 50-day &amp; 200-day SMA),{' '}
+        <strong>Bearish</strong> (below both), or <strong>Mixed</strong>.
+      </p>
+
+      <DataModeBanner live={live} />
+
+      <div className="form-row">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value.toUpperCase())}
+          placeholder="e.g. NVDA, AMD, ^SPX"
+          onKeyDown={(e) => e.key === 'Enter' && addTicker()}
+        />
+        <button type="button" className="btn primary" onClick={addTicker} disabled={adding}>
+          {adding ? 'Adding…' : 'Add to watchlist'}
+        </button>
+        <label className="checkbox">
+          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+          Fetch live data
+        </label>
+        <button type="button" className="btn" onClick={load}>
+          Refresh
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      <CacheHintBanner message={data?.cache_hint} />
+
+      {!data?.rows?.length ? (
+        <p className="info">
+          No tickers yet — type a symbol above and click <strong>Add to watchlist</strong>.
+        </p>
+      ) : (
+        <div className="table-wrap">
+          <table className="watchlist-table">
+            <thead>
+              <tr>
+                <th>Stock</th>
+                <th>Price</th>
+                <th>50-day SMA</th>
+                <th>vs 50-day</th>
+                <th>200-day SMA</th>
+                <th>vs 200-day</th>
+                <th>MA Signal</th>
+                <th>Overall</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row) => (
+                <tr key={row.Stock}>
+                  <td><strong>{row.Stock}</strong></td>
+                  <td>{row['Price (approx.)'] != null ? `$${Number(row['Price (approx.)']).toFixed(2)}` : '—'}</td>
+                  <td>{row['50-day SMA price'] != null ? `$${Number(row['50-day SMA price']).toFixed(2)}` : '—'}</td>
+                  <td>{row['vs 50-day SMA'] ?? '—'}</td>
+                  <td>{row['200-day SMA price'] != null ? `$${Number(row['200-day SMA price']).toFixed(2)}` : '—'}</td>
+                  <td>{row['vs 200-day SMA'] ?? '—'}</td>
+                  <td>
+                    <span className={`signal-pill ${signalClass(row['MA Signal'])}`}>
+                      {row['MA Signal'] ?? '—'}
+                    </span>
+                  </td>
+                  <td>{row['Overall Trend'] ?? '—'}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn-sm danger"
+                      onClick={() => removeTicker(row.Stock)}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Cached Data
 // ---------------------------------------------------------------------------
 export function CachedDataTab({
