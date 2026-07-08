@@ -98,6 +98,22 @@ export interface WeekdaySessionsResponse {
   }[]
 }
 
+export interface RecentSessionsResponse {
+  ticker: string
+  sessions_returned: number
+  live_fetch?: boolean
+  data_source?: string
+  rows: {
+    Date: string
+    Weekday: string
+    Open: number
+    High: number
+    Low: number
+    Close: number
+    'Prev Close': number | null
+  }[]
+}
+
 export const api = {
   health: () => request<{ status: string }>('/api/health'),
 
@@ -176,6 +192,16 @@ export const api = {
       body: JSON.stringify({
         ticker,
         weekday,
+        sessions,
+        live_fetch: liveFetch,
+      }),
+    }),
+
+  recentSessions: (ticker: string, liveFetch: boolean, sessions = 12) =>
+    request<RecentSessionsResponse>('/api/recent-sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        ticker,
         sessions,
         live_fetch: liveFetch,
       }),

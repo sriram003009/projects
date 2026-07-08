@@ -21,6 +21,7 @@ from backend.schemas import (
     PutCallRequest,
     SmaCheckRequest,
     TomorrowWatchlistAddRequest,
+    RecentSessionsRequest,
     WeekdaySessionsRequest,
     WhatIfRequest,
 )
@@ -36,6 +37,7 @@ from services.contract_service import (
 from services.messages import LIVE_FETCH_HINT
 from services.serialize import clean_dict, df_to_records
 from services import tomorrow_watchlist as tw
+from services import recent_sessions as rs
 from services import weekday_sessions as wds
 
 app = FastAPI(
@@ -76,6 +78,7 @@ def _http_error(exc: ServiceError) -> HTTPException:
         "not_found": 404,
         "invalid_weekday": 400,
         "no_weekday_sessions": 404,
+        "no_recent_sessions": 404,
         "invalid_history": 400,
         "history_failed": 400,
     }.get(exc.code, 400)
@@ -179,6 +182,19 @@ def weekday_sessions(body: WeekdaySessionsRequest) -> dict[str, Any]:
         return wds.get_weekday_sessions(
             body.ticker,
             body.weekday,
+            sessions=body.sessions,
+            live_fetch=body.live_fetch,
+        )
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.post("/api/recent-sessions")
+def recent_sessions(body: RecentSessionsRequest) -> dict[str, Any]:
+    """Last N trading sessions: Open, High, Low, Close."""
+    try:
+        return rs.get_recent_sessions(
+            body.ticker,
             sessions=body.sessions,
             live_fetch=body.live_fetch,
         )

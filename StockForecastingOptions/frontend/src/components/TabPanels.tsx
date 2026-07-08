@@ -505,6 +505,12 @@ function formatCloseChange(delta: number, prevClose: number): string {
   return `${formatDelta(delta)} (${pctSign}${Math.abs(pct).toFixed(2)}%)`
 }
 
+function formatPctChange(delta: number, prevClose: number): string {
+  const pct = (delta / prevClose) * 100
+  const sign = pct >= 0 ? '+' : '−'
+  return `(${sign}${Math.abs(pct).toFixed(2)})`
+}
+
 function closeDirection(
   close: number,
   prevClose: number | null,
@@ -651,6 +657,129 @@ export function WeekdaySessionsTab() {
             {data.data_source === 'live' ? 'live' : 'cache'}
           </p>
           <WeekdaySessionsTable rows={data.rows} />
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Last 12 days — consecutive trading sessions OHLC
+// ---------------------------------------------------------------------------
+function Last12DaysTable({
+  rows,
+}: {
+  rows: import('../api').RecentSessionsResponse['rows']
+}) {
+  if (!rows.length) return <p className="muted">No sessions.</p>
+
+  return (
+    <div className="table-wrap weekday-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Weekday</th>
+            <th>Open</th>
+            <th>High</th>
+            <th>Low</th>
+            <th>Close</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const dir = closeDirection(row.Close, row['Prev Close'])
+            const delta =
+              row['Prev Close'] != null ? row.Close - row['Prev Close'] : null
+            return (
+              <tr key={row.Date}>
+                <td>{row.Date}</td>
+                <td>{row.Weekday}</td>
+                <td>{formatMoney(row.Open)}</td>
+                <td>{formatMoney(row.High)}</td>
+                <td>{formatMoney(row.Low)}</td>
+                <td
+                  className={
+                    dir === 'up'
+                      ? 'close-up'
+                      : dir === 'down'
+                        ? 'close-down'
+                        : 'close-flat'
+                  }
+                >
+                  {formatMoney(row.Close)}
+                  {delta != null && row['Prev Close'] != null && dir !== 'unknown' && (
+                    <span className="close-delta">
+                      {' '}
+                      {formatPctChange(delta, row['Prev Close'])}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+export function Last12DaysTab() {
+  const [ticker, setTicker] = useState('SPY')
+  const [live, setLive] = useState(false)
+  const [data, setData] = useState<import('../api').RecentSessionsResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    setError(null)
+    api
+      .recentSessions(ticker, live, 12)
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  return (
+    <div>
+      <h3>Last 12 Days — Open, High, Low, Close</h3>
+      <p className="muted">
+        Pull the last <strong>12 trading sessions</strong> (most recent calendar days with a bar).
+        <strong> Close</strong> is <span className="close-up-inline">green</span> when above the
+        prior session&apos;s close, <span className="close-down-inline">red</span> when below, with
+        percent change shown as <strong>(+0.10)</strong> or <strong>(−0.10)</strong>.
+      </p>
+
+      <DataModeBanner live={live} />
+
+      <div className="form-row">
+        <label>
+          Ticker
+          <input
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            placeholder="SPY"
+          />
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+          Fetch live data
+        </label>
+        <button type="button" className="btn primary" onClick={load} disabled={loading}>
+          {loading ? 'Loading…' : 'Pull sessions'}
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {data && (
+        <>
+          <p className="muted">
+            {data.ticker} · {data.sessions_returned} session(s) ·{' '}
+            {data.data_source === 'live' ? 'live' : 'cache'}
+          </p>
+          <Last12DaysTable rows={data.rows} />
         </>
       )}
     </div>

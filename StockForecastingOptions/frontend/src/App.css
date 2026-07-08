@@ -79,8 +79,13 @@ body {
 }
 
 /* 10 tabs → 5×2 grid */
-.tab-grid:has(.tab-btn:nth-child(10)) {
+.tab-grid:has(.tab-btn:nth-child(10):not(:nth-child(11))) {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+/* 11 tabs → 6 + 5 grid */
+.tab-grid:has(.tab-btn:nth-child(11)) {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .tab-btn {
@@ -114,6 +119,7 @@ body {
 .tab-stone { background: linear-gradient(135deg, #efebe9, #bcaaa4); color: #4e342e; }
 .tab-amber { background: linear-gradient(135deg, #fff8e1, #ffca28); color: #ff6f00; }
 .tab-cyan { background: linear-gradient(135deg, #e0f7fa, #4dd0e1); color: #006064; }
+.tab-lime { background: linear-gradient(135deg, #f9fbe7, #dce775); color: #33691e; }
 
 .tab-btn.active.tab-blue { background: linear-gradient(135deg, #1976d2, #0d47a1); color: #fff; }
 .tab-btn.active.tab-orange { background: linear-gradient(135deg, #f57c00, #e65100); color: #fff; }
@@ -125,6 +131,7 @@ body {
 .tab-btn.active.tab-stone { background: linear-gradient(135deg, #6d4c41, #4e342e); color: #fff; }
 .tab-btn.active.tab-amber { background: linear-gradient(135deg, #ff8f00, #e65100); color: #fff; }
 .tab-btn.active.tab-cyan { background: linear-gradient(135deg, #00838f, #006064); color: #fff; }
+.tab-btn.active.tab-lime { background: linear-gradient(135deg, #9e9d24, #33691e); color: #fff; }
 
 .signal-pill {
   display: inline-block;

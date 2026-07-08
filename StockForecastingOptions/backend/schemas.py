@@ -50,6 +50,12 @@ class WeekdaySessionsRequest(BaseModel):
     live_fetch: bool = False
 
 
+class RecentSessionsRequest(BaseModel):
+    ticker: str = Field(..., min_length=1)
+    sessions: int = Field(12, ge=1, le=60)
+    live_fetch: bool = False
+
+
 class CacheClearRequest(BaseModel):
     confirm: bool = False
     symbol: str | None = None
