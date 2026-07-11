@@ -74,6 +74,8 @@ def _level_interaction(
             return "broke above"
         if _near(h, price):
             return "tested high"
+        if h < price - 0.05:
+            return "not reached"
         return None
 
     # support
@@ -85,6 +87,8 @@ def _level_interaction(
         return "tested low"
     if _near(c, price):
         return "closed at level"
+    if l > price + 0.05:
+        return "not reached"
     return None
 
 

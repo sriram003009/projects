@@ -861,7 +861,7 @@ function PivotLevelsTable({ levels }: { levels: import('../api').PivotLevelRow[]
             <th>Level</th>
             <th>Price</th>
             <th>Notes</th>
-            <th>Today</th>
+            <th>Today vs level</th>
           </tr>
         </thead>
         <tbody>
@@ -960,7 +960,9 @@ function PivotLevelsHelpPopup({
           <p className="muted">
             <strong>How to read it:</strong> rallies often stall at R1/R2; losing PP can accelerate
             selling toward S1/S2/S3. Prior high and prior close often matter as much as the
-            calculated levels.
+            calculated levels. The <strong>Today vs level</strong> column shows whether today&apos;s
+            session touched each price — supports below today&apos;s low show{' '}
+            <strong>not reached</strong> until price drops there.
           </p>
         </div>
         <div className="help-modal-footer">
@@ -1006,8 +1008,10 @@ export function SpxPivotsTab() {
       <p className="muted">
         Classic floor-trader pivots from the <strong>prior session</strong> high, low, and close:{' '}
         <strong>PP = (H + L + C) / 3</strong>, then R1–R3 above and S1–S3 below. Prior day H/L/C
-        are listed too — same math newsletters use. Default is <strong>^GSPC</strong> (S&P 500
-        index); try <strong>SPY</strong> to match your sheet.
+        are listed too — same math newsletters use. The <strong>Today vs level</strong> column
+        describes how today&apos;s range interacted with each price (blank means no meaningful
+        touch). Default is <strong>^GSPC</strong> (S&P 500 index); try <strong>SPY</strong> to
+        match your sheet.
       </p>
 
       <DataModeBanner live={live} />
