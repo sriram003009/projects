@@ -84,6 +84,80 @@ def _rolling_vwap(df: pd.DataFrame, lookback: int) -> float | None:
     return float((typical * vol).sum() / vol.sum())
 
 
+def _vix_price_level(vix: float) -> tuple[str, str]:
+    """Absolute VIX level label and short description."""
+    if vix >= 30:
+        return "Extreme", "Panic-level fear — big SPY swings, bounce or further drop both possible."
+    if vix >= 25:
+        return "High", "High fear — SPY often under pressure or very volatile."
+    if vix >= 20:
+        return "Elevated", "Worries picking up — SPY rallies may struggle."
+    if vix >= 15:
+        return "Normal", "Typical range — SPY usually follows its trend more than VIX."
+    if vix >= 12:
+        return "Low", "Calm market — SPY can drift up, but shocks have less cushion."
+    return "Very Low", "Complacency — SPY often quiet, but a surprise can hit harder."
+
+
+def _vix_spy_implication(
+    *,
+    vix: float,
+    vix_level: str,
+    stress: Stress,
+    regime: Regime,
+    trend: Trend,
+    vix_chg_1d: float | None,
+) -> str:
+    """Plain English: what today's VIX reading tends to mean for SPY."""
+    parts: list[str] = [
+        f"VIX at {vix:.2f} is {vix_level.lower()} versus history (typical 'quiet' is ~12–15, 'scared' is ~25+)."
+    ]
+
+    if vix_chg_1d is not None:
+        if vix_chg_1d >= 5:
+            parts.append(
+                "VIX jumped today — that often goes with SPY selling or choppy drops."
+            )
+        elif vix_chg_1d <= -5:
+            parts.append(
+                "VIX fell sharply today — that often helps SPY stabilize or bounce."
+            )
+        elif vix_chg_1d > 0:
+            parts.append("VIX ticked up — mild headwind for SPY.")
+        elif vix_chg_1d < 0:
+            parts.append("VIX ticked down — mild tailwind for SPY.")
+
+    if stress == "EXTREME_HIGH":
+        parts.append(
+            "Z-score says fear is unusually HIGH — watch for mean-reversion bounces in SPY, "
+            "but whipsaws are common."
+        )
+    elif stress == "EXTREME_LOW":
+        parts.append(
+            "Z-score says fear is unusually LOW — SPY can keep climbing, but complacency "
+            "pullbacks happen when something spooks the market."
+        )
+
+    if regime == "Backwardation":
+        parts.append(
+            "Term structure is backwardation (near-term fear > longer-term) — SPY often "
+            "acts nervous short-term."
+        )
+    else:
+        parts.append(
+            "Term structure is contango (calmer curve) — less panic in the options market."
+        )
+
+    if trend == "Bullish":
+        parts.append("SPY trend is still Bullish — price action is fighting any fear.")
+    elif trend == "Bearish":
+        parts.append("SPY trend is Bearish — price is already weak alongside VIX.")
+    else:
+        parts.append("SPY trend is unclear — wait for direction before leaning on VIX alone.")
+
+    return " ".join(parts)
+
+
 def _load_history(symbol: str, *, period: str, live_fetch: bool) -> pd.DataFrame:
     try:
         df = get_underlying_history(symbol, period=period, live_fetch=live_fetch)
@@ -394,6 +468,8 @@ def get_vix_spy_signal(
         )
 
     vix_close = float(vix_df["Close"].iloc[-1])
+    vix_1d = float(vix_df["Close"].iloc[-2]) if len(vix_df) >= 2 else vix_close
+    vix_chg_1d = ((vix_close - vix_1d) / vix_1d * 100.0) if vix_1d else None
     vix3m_close = float(vix3m_df["Close"].iloc[-1])
     if vix3m_close <= 0:
         raise ServiceError("invalid_vix3m", "VIX3M close must be positive.")
@@ -409,6 +485,7 @@ def get_vix_spy_signal(
     else:
         vix_z = (vix_close - vix_mean) / vix_std
     stress = _classify_stress(vix_z, cfg)
+    vix_level, vix_level_note = _vix_price_level(vix_close)
 
     spy_close = float(spy_df["Close"].iloc[-1])
     ema_fast_s = spy_df["Close"].ewm(span=int(cfg["ema_fast"]), adjust=False).mean()
@@ -418,6 +495,14 @@ def get_vix_spy_signal(
     vwap = _rolling_vwap(spy_df, int(cfg["vwap_lookback"]))
     rsi = _rsi(spy_df["Close"], int(cfg["rsi_period"]))
     trend = _classify_trend(spy_close, vwap, ema_fast, ema_slow, rsi, cfg)
+    vix_spy_implication = _vix_spy_implication(
+        vix=vix_close,
+        vix_level=vix_level,
+        stress=stress,
+        regime=regime,
+        trend=trend,
+        vix_chg_1d=vix_chg_1d,
+    )
 
     signal, rule_note = _combine_signal(regime, stress, trend)
     layers = _layer_alignment(signal, regime, stress, trend)
@@ -472,6 +557,15 @@ def get_vix_spy_signal(
                 "std": round(vix_std, 2),
                 "extreme_high_threshold": float(cfg["vix_zscore_extreme_high"]),
                 "extreme_low_threshold": float(cfg["vix_zscore_extreme_low"]),
+            },
+            "vix_detail": {
+                "symbol": VIX_SYMBOL,
+                "close": round(vix_close, 2),
+                "change_1d_pct": round(vix_chg_1d, 2) if vix_chg_1d is not None else None,
+                "level": vix_level,
+                "level_note": vix_level_note,
+                "vs_20d_avg": round(vix_mean, 2),
+                "spy_implication": vix_spy_implication,
             },
             "spy_technicals": {
                 "symbol": SPY_SYMBOL,

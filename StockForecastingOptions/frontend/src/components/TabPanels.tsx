@@ -568,9 +568,27 @@ export function CallsPutsTab() {
 // VIX term structure → SPY Call / Put / No Trade signal
 // ---------------------------------------------------------------------------
 function vixSignalClass(signal: string): string {
-  if (signal === 'BUY CALL') return 'signal-bullish'
-  if (signal === 'BUY PUT') return 'signal-bearish'
-  return 'signal-unknown'
+  if (signal === 'BUY CALL') return 'signal-bullish vix-signal-call'
+  if (signal === 'BUY PUT') return 'signal-bearish vix-signal-put'
+  return 'signal-unknown vix-signal-none'
+}
+
+function vixHeroClass(signal: string): string {
+  if (signal === 'BUY CALL') return 'vix-signal-hero vix-hero-call'
+  if (signal === 'BUY PUT') return 'vix-signal-hero vix-hero-put'
+  return 'vix-signal-hero vix-hero-none'
+}
+
+function trendLabelClass(trend: string): string {
+  if (trend === 'Bullish') return 'close-up-inline'
+  if (trend === 'Bearish') return 'close-down-inline'
+  return 'session-row-cache-inline'
+}
+
+function stressLabelClass(stress: string): string {
+  if (stress === 'EXTREME_HIGH') return 'close-down-inline'
+  if (stress === 'EXTREME_LOW') return 'close-up-inline'
+  return 'session-row-cache-inline'
 }
 
 function biasClass(bias: string): string {
@@ -619,37 +637,37 @@ function VixSignalHelpPopup({
                 <td>Calm (Contango)</td>
                 <td>Normal</td>
                 <td>Up (Bullish)</td>
-                <td>BUY CALL</td>
+                <td><span className="vix-highlight-call">BUY CALL</span></td>
               </tr>
               <tr>
                 <td>Calm (Contango)</td>
                 <td>Normal</td>
                 <td>Down (Bearish)</td>
-                <td>BUY PUT</td>
+                <td><span className="vix-highlight-put">BUY PUT</span></td>
               </tr>
               <tr>
                 <td>Scared (Backwardation)</td>
                 <td>Very high fear</td>
                 <td>Up (Bullish)</td>
-                <td>BUY CALL (bounce)</td>
+                <td><span className="vix-highlight-call">BUY CALL (bounce)</span></td>
               </tr>
               <tr>
                 <td>Scared (Backwardation)</td>
                 <td>Very high fear</td>
                 <td>Down (Bearish)</td>
-                <td>NO TRADE (too wild)</td>
+                <td><span className="vix-highlight-none">NO TRADE (too wild)</span></td>
               </tr>
               <tr>
                 <td>Any</td>
                 <td>Very low fear</td>
                 <td>Down (Bearish)</td>
-                <td>BUY PUT</td>
+                <td><span className="vix-highlight-put">BUY PUT</span></td>
               </tr>
               <tr>
                 <td>Anything else</td>
                 <td>—</td>
                 <td>Not clear</td>
-                <td>NO TRADE</td>
+                <td><span className="vix-highlight-none">NO TRADE</span></td>
               </tr>
             </tbody>
           </table>
@@ -675,18 +693,23 @@ function VixSignalHelpNotes() {
       <h4>Notes — how to read this (simple version)</h4>
       <ul>
         <li>
+          <strong>VIX price today</strong> is shown at the top after you run the signal. Rough
+          guide: <span className="close-up-inline">under ~15</span> = calm (SPY often steady),{' '}
+          <span className="close-down-inline">over ~25</span> = scared (SPY often jumpy or down).
+        </li>
+        <li>
           <strong>SPY</strong> is like a big basket of US stocks. When its trend is{' '}
-          <strong>Bullish</strong>, price has been going <em>up</em> lately (above its average
-          prices and RSI &gt; 50).
+          <span className="close-up-inline">Bullish</span>, price has been going <em>up</em> lately.
+          <span className="close-down-inline"> Bearish</span> means the opposite.
         </li>
         <li>
           <strong>VIX</strong> is the &quot;fear meter.&quot; High VIX = people are nervous. Low VIX
           = people are relaxed — sometimes <em>too</em> relaxed.
         </li>
         <li>
-          <strong>BUY CALL</strong> = the tool thinks SPY might go up (a call option bets on up).{' '}
-          <strong>BUY PUT</strong> = it thinks SPY might go down.{' '}
-          <strong>NO TRADE</strong> = wait — the three checks don&apos;t line up enough.
+          <span className="vix-highlight-call">BUY CALL</span> = green light to look for SPY going{' '}
+          <em>up</em>. <span className="vix-highlight-put">BUY PUT</span> = red light for SPY going{' '}
+          <em>down</em>. <span className="vix-highlight-none">NO TRADE</span> = wait.
         </li>
         <li>
           There are <strong>three checks</strong>: (1) VIX term structure — calm vs scared, (2) VIX
@@ -758,7 +781,7 @@ export function VixSpySignalTab() {
 
       {data && (
         <>
-          <div className="vix-signal-hero">
+          <div className={vixHeroClass(data.signal)}>
             <span className={`signal-pill vix-signal-pill ${vixSignalClass(data.signal)}`}>
               {data.signal}
             </span>
@@ -767,13 +790,52 @@ export function VixSpySignalTab() {
             </span>
             <p className="vix-summary">{data.summary}</p>
             <p className="muted vix-scores">
-              Regime: <strong>{data.regime}</strong> · Stress: <strong>{data.stress}</strong> ·
-              Trend: <strong>{data.trend}</strong>
+              Regime: <strong>{data.regime}</strong> · Stress:{' '}
+              <span className={stressLabelClass(data.stress)}>{data.stress}</span> · Trend:{' '}
+              <span className={trendLabelClass(data.trend)}>{data.trend}</span>
               {data.data_source ? ` · ${data.data_source}` : ''}
             </p>
             {data.signal === 'NO TRADE' && data.context_note && (
               <p className="banner info vix-context-note">{data.context_note}</p>
             )}
+          </div>
+
+          <div className="vix-spotlight">
+            <div className="vix-spotlight-main">
+              <h4>VIX today — fear meter</h4>
+              <p className="vix-spotlight-price">{data.vix_detail.close.toFixed(2)}</p>
+              <p className="muted">
+                Level: <strong>{data.vix_detail.level}</strong>
+                {data.vix_detail.change_1d_pct != null && (
+                  <>
+                    {' '}
+                    · 1d{' '}
+                    <span
+                      className={
+                        data.vix_detail.change_1d_pct >= 0
+                          ? 'close-down-inline'
+                          : 'close-up-inline'
+                      }
+                    >
+                      {data.vix_detail.change_1d_pct >= 0 ? '+' : ''}
+                      {data.vix_detail.change_1d_pct.toFixed(1)}%
+                    </span>
+                  </>
+                )}
+                {' '}
+                · 20d avg {data.vix_detail.vs_20d_avg.toFixed(2)}
+              </p>
+              <p className="vix-level-note">{data.vix_detail.level_note}</p>
+            </div>
+            <div className="vix-spotlight-spy">
+              <h4>What this VIX means for SPY</h4>
+              <p>{data.vix_detail.spy_implication}</p>
+              <p className="muted">
+                SPY now: <strong>{formatMoney(data.spy_technicals.close)}</strong> · VIX3M{' '}
+                {data.term_structure.vix3m_close.toFixed(2)} · ratio{' '}
+                {data.term_structure.ratio.toFixed(3)} ({data.regime})
+              </p>
+            </div>
           </div>
 
           <div className="vix-metrics-grid">
@@ -792,12 +854,15 @@ export function VixSpySignalTab() {
             <div className="vix-metric-card">
               <h4>VIX stress (z-score)</h4>
               <p className="vix-metric-value">
-                {data.vix_stress.zscore >= 0 ? '+' : ''}
-                {data.vix_stress.zscore.toFixed(2)}
+                <span className={stressLabelClass(data.stress)}>
+                  {data.vix_stress.zscore >= 0 ? '+' : ''}
+                  {data.vix_stress.zscore.toFixed(2)}
+                </span>
               </p>
               <p className="muted">
-                Level: <strong>{data.stress}</strong> · {data.vix_stress.lookback_days}d μ=
-                {data.vix_stress.mean.toFixed(2)} σ={data.vix_stress.std.toFixed(2)}
+                Level: <span className={stressLabelClass(data.stress)}>{data.stress}</span> ·{' '}
+                {data.vix_stress.lookback_days}d μ={data.vix_stress.mean.toFixed(2)} σ=
+                {data.vix_stress.std.toFixed(2)}
               </p>
               <p className="muted">
                 High &gt; {data.vix_stress.extreme_high_threshold} · Low &lt;{' '}
@@ -808,7 +873,7 @@ export function VixSpySignalTab() {
               <h4>SPY trend</h4>
               <p className="vix-metric-value">{formatMoney(data.spy_technicals.close)}</p>
               <p className="muted">
-                Trend: <strong>{data.trend}</strong>
+                Trend: <span className={trendLabelClass(data.trend)}>{data.trend}</span>
                 {data.spy_technicals.rsi14 != null
                   ? ` · RSI ${data.spy_technicals.rsi14.toFixed(1)}`
                   : ''}
@@ -822,8 +887,25 @@ export function VixSpySignalTab() {
           </div>
 
           {data.suggested_strike && (
-            <div className="vix-strike-box">
-              <h4>Suggested strike logic</h4>
+            <div
+              className={`vix-strike-box ${
+                data.suggested_strike.option_type === 'Call'
+                  ? 'vix-strike-call'
+                  : 'vix-strike-put'
+              }`}
+            >
+              <h4>
+                Suggested strike —{' '}
+                <span
+                  className={
+                    data.suggested_strike.option_type === 'Call'
+                      ? 'vix-highlight-call'
+                      : 'vix-highlight-put'
+                  }
+                >
+                  BUY {data.suggested_strike.option_type.toUpperCase()}
+                </span>
+              </h4>
               <p>
                 <strong>{data.suggested_strike.option_type}</strong> · example strike{' '}
                 <strong>${data.suggested_strike.example_strike}</strong> (ATM ${data.suggested_strike.atm_strike})
@@ -859,11 +941,25 @@ export function VixSpySignalTab() {
                 {data.layers.map((row) => (
                   <tr key={row.Layer}>
                     <td>{row.Layer}</td>
-                    <td>{row.Reading}</td>
+                    <td>
+                      {row.Reading === 'Bullish' || row.Reading === 'Bearish' ? (
+                        <span className={trendLabelClass(row.Reading)}>{row.Reading}</span>
+                      ) : row.Reading === 'EXTREME_HIGH' || row.Reading === 'EXTREME_LOW' ? (
+                        <span className={stressLabelClass(row.Reading)}>{row.Reading}</span>
+                      ) : (
+                        row.Reading
+                      )}
+                    </td>
                     <td>
                       <span className={biasClass(row.Bias)}>{row.Bias}</span>
                     </td>
-                    <td>{row.Aligned ? '✓' : '—'}</td>
+                    <td>
+                      {row.Aligned ? (
+                        <span className="vix-aligned-yes">✓ yes</span>
+                      ) : (
+                        <span className="vix-aligned-no">— no</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

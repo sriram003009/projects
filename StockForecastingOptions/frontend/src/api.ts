@@ -218,6 +218,15 @@ export interface VixSpySignalResponse {
     extreme_high_threshold: number
     extreme_low_threshold: number
   }
+  vix_detail: {
+    symbol: string
+    close: number
+    change_1d_pct?: number | null
+    level: string
+    level_note: string
+    vs_20d_avg: number
+    spy_implication: string
+  }
   spy_technicals: {
     symbol: string
     close: number

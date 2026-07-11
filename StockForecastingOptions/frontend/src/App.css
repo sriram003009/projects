@@ -627,9 +627,126 @@ th {
   text-align: center;
 }
 
+.vix-hero-call {
+  background: #e8f5e9;
+  border: 2px solid #66bb6a;
+}
+
+.vix-hero-put {
+  background: #ffebee;
+  border: 2px solid #ef5350;
+}
+
+.vix-hero-none {
+  background: #f1f5f9;
+  border: 2px solid #94a3b8;
+}
+
 .vix-signal-pill {
   font-size: 1.35rem;
   padding: 0.45rem 1.25rem;
+}
+
+.vix-signal-call {
+  background: #2e7d32 !important;
+  color: #fff !important;
+}
+
+.vix-signal-put {
+  background: #c62828 !important;
+  color: #fff !important;
+}
+
+.vix-signal-none {
+  background: #546e7a !important;
+  color: #fff !important;
+}
+
+.vix-highlight-call {
+  display: inline-block;
+  padding: 0.08rem 0.4rem;
+  border-radius: 4px;
+  background: #e8f5e9;
+  color: #1b5e20;
+  font-weight: 700;
+}
+
+.vix-highlight-put {
+  display: inline-block;
+  padding: 0.08rem 0.4rem;
+  border-radius: 4px;
+  background: #ffebee;
+  color: #c62828;
+  font-weight: 700;
+}
+
+.vix-highlight-none {
+  display: inline-block;
+  padding: 0.08rem 0.4rem;
+  border-radius: 4px;
+  background: #eceff1;
+  color: #546e7a;
+  font-weight: 700;
+}
+
+.vix-spotlight {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 1rem;
+  margin: 1rem 0;
+  padding: 1rem 1.15rem;
+  border-radius: 12px;
+  background: #fafafa;
+  border: 1px solid #e2e8f0;
+}
+
+.vix-spotlight h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.vix-spotlight-price {
+  margin: 0 0 0.35rem;
+  font-size: 2rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #1e293b;
+}
+
+.vix-level-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.vix-spotlight-spy p {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.vix-spotlight-spy p:last-child {
+  margin-bottom: 0;
+}
+
+.vix-strike-call {
+  background: #e8f5e9;
+  border-color: #81c784;
+}
+
+.vix-strike-put {
+  background: #ffebee;
+  border-color: #e57373;
+}
+
+.vix-aligned-yes {
+  color: #1b5e20;
+  font-weight: 700;
+}
+
+.vix-aligned-no {
+  color: #94a3b8;
+  font-weight: 600;
 }
 
 .vix-confidence {
@@ -741,6 +858,10 @@ th {
 
 @media (max-width: 720px) {
   .vix-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vix-spotlight {
     grid-template-columns: 1fr;
   }
 }
