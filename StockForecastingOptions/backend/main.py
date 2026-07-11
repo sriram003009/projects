@@ -21,6 +21,7 @@ from backend.schemas import (
     PutCallRequest,
     SmaCheckRequest,
     TomorrowWatchlistAddRequest,
+    PivotLevelsRequest,
     RecentSessionsRequest,
     WeekdaySessionsRequest,
     WhatIfRequest,
@@ -37,6 +38,7 @@ from services.contract_service import (
 from services.messages import LIVE_FETCH_HINT
 from services.serialize import clean_dict, df_to_records
 from services import tomorrow_watchlist as tw
+from services import pivot_levels as piv
 from services import recent_sessions as rs
 from services import weekday_sessions as wds
 
@@ -198,6 +200,15 @@ def recent_sessions(body: RecentSessionsRequest) -> dict[str, Any]:
             sessions=body.sessions,
             live_fetch=body.live_fetch,
         )
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.post("/api/pivot-levels")
+def pivot_levels(body: PivotLevelsRequest) -> dict[str, Any]:
+    """Floor-trader pivot ladder from prior session H/L/C."""
+    try:
+        return piv.get_pivot_levels(body.ticker, live_fetch=body.live_fetch)
     except ServiceError as exc:
         raise _http_error(exc) from exc
 

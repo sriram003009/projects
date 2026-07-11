@@ -144,9 +144,11 @@ def disk_cached_history(
     if cached is not None and not cached.empty:
         last_date = cached.index.max().normalize()
         if last_date >= target_date:
-            return cached
-
-        start = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            # Today's bar is already cached but changes intraday; also refresh
+            # recent sessions so prior-day closes stay aligned with Yahoo.
+            start = (target_date - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+        else:
+            start = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         try:
             delta = yf.Ticker(symbol).history(start=start)
         except Exception:
@@ -287,7 +289,7 @@ def cache_metadata(symbol: str) -> dict | None:
     if not isinstance(cached.index, pd.DatetimeIndex):
         return None
     last_bar = cached.index.max()
-    mtime = dt.datetime.fromtimestamp(path.stat().st_mtime)
+    mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc)
     return {
         "symbol": symbol,
         "last_bar_date": last_bar,

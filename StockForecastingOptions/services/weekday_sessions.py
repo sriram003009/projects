@@ -11,6 +11,7 @@ from services.contract_service import ServiceError
 from services.data_access import get_underlying_history
 from services.messages import cache_miss_message
 from services.serialize import clean_dict
+from services.session_helpers import enrich_current_session_rows
 
 WEEKDAY_NAMES: dict[str, int] = {
     "monday": 0,
@@ -43,7 +44,7 @@ def get_weekday_sessions(
     ticker: str,
     weekday: str | int,
     *,
-    sessions: int = 10,
+    sessions: int = 20,
     live_fetch: bool = False,
 ) -> dict[str, Any]:
     """Return the last *sessions* bars that fall on *weekday* (Mon=0 … Fri=4)."""
@@ -103,6 +104,8 @@ def get_weekday_sessions(
                 "Close": float(row["Close"]),
             }
         )
+
+    rows = enrich_current_session_rows(rows, ticker=ticker, live_fetch=live_fetch)
 
     meta = fcache.cache_metadata(ticker)
 

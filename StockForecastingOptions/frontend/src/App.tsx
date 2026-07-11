@@ -13,7 +13,8 @@ import {
   WhatIfTab,
   StocksOnWatchlistTab,
   WeekdaySessionsTab,
-  Last12DaysTab,
+  Last20DaysTab,
+  SpxPivotsTab,
 } from './components/TabPanels'
 import type { ContractForm, ContractLookup } from './types'
 import './App.css'
@@ -24,7 +25,8 @@ const TABS = [
   { id: 'whatif', label: 'What-If Scenario', row: 1, color: 'tab-purple' },
   { id: 'movers', label: 'Track the Best', row: 1, color: 'tab-green' },
   { id: 'weekday', label: 'Weekday Sessions', row: 2, color: 'tab-cyan' },
-  { id: 'last12', label: 'Last 12 Days', row: 2, color: 'tab-lime' },
+  { id: 'last20', label: 'Last 20 Days', row: 2, color: 'tab-lime' },
+  { id: 'spx', label: 'SPX Pivots', row: 2, color: 'tab-violet' },
   { id: 'watchlist', label: 'Stocks on Watchlist', row: 2, color: 'tab-amber' },
   { id: 'summary', label: 'Quick Summary', row: 2, color: 'tab-teal' },
   { id: 'sma', label: 'Check SMA', row: 2, color: 'tab-indigo' },
@@ -136,7 +138,7 @@ function App() {
           <p className="caption">
             <strong>Row 1 — Contract:</strong> Recent Activity · 5-Day Forecasts · What-If · Track the Best
             <br />
-            <strong>Row 2 — Scanners:</strong> Weekday Sessions · Last 12 Days · Stocks on Watchlist · Quick Summary · Check SMA · Calls vs Puts · Cached Data
+            <strong>Row 2 — Scanners:</strong> Weekday Sessions · Last 20 Days · SPX Pivots · Stocks on Watchlist · Quick Summary · Check SMA · Calls vs Puts · Cached Data
           </p>
         </header>
 
@@ -164,7 +166,8 @@ function App() {
           {activeTab === 'whatif' && <WhatIfTab form={form} contract={contract} />}
           {activeTab === 'movers' && <TrackBestTab />}
           {activeTab === 'weekday' && <WeekdaySessionsTab />}
-          {activeTab === 'last12' && <Last12DaysTab />}
+          {activeTab === 'last20' && <Last20DaysTab />}
+          {activeTab === 'spx' && <SpxPivotsTab />}
           {activeTab === 'watchlist' && <StocksOnWatchlistTab />}
           {activeTab === 'summary' && <QuickSummaryTab />}
           {activeTab === 'sma' && <CheckSmaTab />}

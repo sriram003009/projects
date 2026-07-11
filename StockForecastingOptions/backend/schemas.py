@@ -46,13 +46,18 @@ class WeekdaySessionsRequest(BaseModel):
         ...,
         description="Monday, Tuesday, Wednesday, Thursday, or Friday",
     )
-    sessions: int = Field(10, ge=1, le=52)
+    sessions: int = Field(20, ge=1, le=52)
     live_fetch: bool = False
 
 
 class RecentSessionsRequest(BaseModel):
     ticker: str = Field(..., min_length=1)
-    sessions: int = Field(12, ge=1, le=60)
+    sessions: int = Field(20, ge=1, le=60)
+    live_fetch: bool = False
+
+
+class PivotLevelsRequest(BaseModel):
+    ticker: str = Field("^GSPC", min_length=1, description="^GSPC (SPX), SPY, etc.")
     live_fetch: bool = False
 
 

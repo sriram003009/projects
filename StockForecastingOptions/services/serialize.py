@@ -18,10 +18,10 @@ def _scalar(v: Any) -> Any:
         if math.isnan(f) or math.isinf(f):
             return None
         return f
-    if isinstance(v, (np.integer, int)):
-        return int(v)
     if isinstance(v, (np.bool_, bool)):
         return bool(v)
+    if isinstance(v, (np.integer, int)):
+        return int(v)
     if isinstance(v, (pd.Timestamp, datetime)):
         return v.isoformat()
     if isinstance(v, date):

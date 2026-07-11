@@ -82,20 +82,31 @@ export interface TomorrowWatchlistRow {
   'Overall Trend'?: string
 }
 
+export interface CacheMeta {
+  symbol?: string
+  last_bar_date?: string
+  cache_updated_at?: string
+  num_rows?: number
+  file_size_kb?: number
+}
+
 export interface WeekdaySessionsResponse {
   ticker: string
   weekday: string
   sessions_returned: number
   live_fetch?: boolean
   data_source?: string
-  rows: {
+  cache_meta?: CacheMeta | null
+  rows: ({
     Date: string
     Weekday: string
     'Prev Close': number | null
     High: number
     Low: number
     Close: number
-  }[]
+    'Is Current Session'?: boolean
+    'Row Source'?: 'live' | 'cache' | 'historical'
+  })[]
 }
 
 export interface RecentSessionsResponse {
@@ -103,7 +114,8 @@ export interface RecentSessionsResponse {
   sessions_returned: number
   live_fetch?: boolean
   data_source?: string
-  rows: {
+  cache_meta?: CacheMeta | null
+  rows: ({
     Date: string
     Weekday: string
     Open: number
@@ -111,7 +123,63 @@ export interface RecentSessionsResponse {
     Low: number
     Close: number
     'Prev Close': number | null
-  }[]
+    'Is Current Session'?: boolean
+    'Row Source'?: 'live' | 'cache' | 'historical'
+  })[]
+}
+
+export interface PivotLevelRow {
+  Label: string
+  Price: number
+  Kind: 'resistance' | 'pivot' | 'support'
+  Notes: string
+  Today?: string
+}
+
+export interface PivotLevelsResponse {
+  ticker: string
+  display_name: string
+  formula: string
+  session_date?: string | null
+  prior_session: {
+    Date: string
+    Weekday: string
+    Open: number
+    High: number
+    Low: number
+    Close: number
+  }
+  prior_2_session?: {
+    Date: string
+    Weekday: string
+    Low: number
+    High?: number
+    Close?: number
+    Open?: number
+  } | null
+  pivots: Record<string, number>
+  levels: PivotLevelRow[]
+  today?: {
+    Date: string
+    Weekday: string
+    Open: number
+    High: number
+    Low: number
+    Close: number
+    'Is Current Session'?: boolean
+    'Row Source'?: string
+  } | null
+  summary_lines: string[]
+  next_resistance?: {
+    Label: string
+    Price: number
+    Kind: string
+    Distance: number
+    'Distance Pct': number
+  } | null
+  live_fetch?: boolean
+  data_source?: string
+  cache_meta?: CacheMeta | null
 }
 
 export const api = {
@@ -185,7 +253,7 @@ export const api = {
     ticker: string,
     weekday: string,
     liveFetch: boolean,
-    sessions = 10,
+    sessions = 20,
   ) =>
     request<WeekdaySessionsResponse>('/api/weekday-sessions', {
       method: 'POST',
@@ -197,7 +265,7 @@ export const api = {
       }),
     }),
 
-  recentSessions: (ticker: string, liveFetch: boolean, sessions = 12) =>
+  recentSessions: (ticker: string, liveFetch: boolean, sessions = 20) =>
     request<RecentSessionsResponse>('/api/recent-sessions', {
       method: 'POST',
       body: JSON.stringify({
@@ -205,6 +273,12 @@ export const api = {
         sessions,
         live_fetch: liveFetch,
       }),
+    }),
+
+  pivotLevels: (ticker: string, liveFetch: boolean) =>
+    request<PivotLevelsResponse>('/api/pivot-levels', {
+      method: 'POST',
+      body: JSON.stringify({ ticker, live_fetch: liveFetch }),
     }),
 
   summary: (liveFetch: boolean) =>

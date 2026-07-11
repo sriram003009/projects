@@ -11,6 +11,7 @@ from services.contract_service import ServiceError
 from services.data_access import get_underlying_history
 from services.messages import cache_miss_message
 from services.serialize import clean_dict
+from services.session_helpers import enrich_current_session_rows
 
 WEEKDAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -18,7 +19,7 @@ WEEKDAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 def get_recent_sessions(
     ticker: str,
     *,
-    sessions: int = 12,
+    sessions: int = 20,
     live_fetch: bool = False,
 ) -> dict[str, Any]:
     """Return the last *sessions* daily bars with Open, High, Low, Close."""
@@ -76,6 +77,8 @@ def get_recent_sessions(
                 "Prev Close": float(prev) if pd.notna(prev) else None,
             }
         )
+
+    rows = enrich_current_session_rows(rows, ticker=ticker, live_fetch=live_fetch)
 
     meta = fcache.cache_metadata(ticker)
 

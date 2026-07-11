@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import Plot from 'react-plotly.js'
 import { api, type MoversResponse } from '../api'
-import { CacheHintBanner, DataModeBanner } from './DataModeBanner'
+import { CacheHintBanner, CacheUpdatedBanner, DataModeBanner } from './DataModeBanner'
 import type { ContractForm, ContractLookup } from '../types'
 import { DataTable } from './DataTable'
 import { PriceChart } from './PriceChart'
@@ -484,7 +484,7 @@ export function CallsPutsTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Weekday sessions — last 10 Mon/Tue/Wed/Thu/Fri bars
+// Weekday sessions — last 20 Mon/Tue/Wed/Thu/Fri bars
 // ---------------------------------------------------------------------------
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const
 type WeekdayName = (typeof WEEKDAYS)[number]
@@ -521,6 +521,47 @@ function closeDirection(
   return 'flat'
 }
 
+function sessionRowClassName(row: {
+  'Is Current Session'?: boolean
+  'Row Source'?: string
+}): string {
+  if (!row['Is Current Session']) return ''
+  return row['Row Source'] === 'live' ? 'session-row-live' : 'session-row-cache'
+}
+
+function countSessionCloseColors(
+  rows: { Close: number; 'Prev Close': number | null }[],
+): { green: number; red: number; flat: number } {
+  let green = 0
+  let red = 0
+  let flat = 0
+  for (const row of rows) {
+    const dir = closeDirection(row.Close, row['Prev Close'])
+    if (dir === 'up') green += 1
+    else if (dir === 'down') red += 1
+    else if (dir === 'flat') flat += 1
+  }
+  return { green, red, flat }
+}
+
+function SessionCloseSummary({
+  rows,
+}: {
+  rows: { Close: number; 'Prev Close': number | null }[]
+}) {
+  const { green, red } = countSessionCloseColors(rows)
+  return (
+    <div className="session-close-summary">
+      <p>
+        <span className="close-up-inline">Green</span> = {green}
+      </p>
+      <p>
+        <span className="close-down-inline">Red</span> = {red}
+      </p>
+    </div>
+  )
+}
+
 function WeekdaySessionsTable({
   rows,
 }: {
@@ -547,7 +588,7 @@ function WeekdaySessionsTable({
             const delta =
               row['Prev Close'] != null ? row.Close - row['Prev Close'] : null
             return (
-              <tr key={row.Date}>
+              <tr key={row.Date} className={sessionRowClassName(row)}>
                 <td>{row.Date}</td>
                 <td>{row.Weekday}</td>
                 <td>{formatMoney(row['Prev Close'])}</td>
@@ -582,6 +623,7 @@ function WeekdaySessionsTable({
           })}
         </tbody>
       </table>
+      <SessionCloseSummary rows={rows} />
     </div>
   )
 }
@@ -598,7 +640,7 @@ export function WeekdaySessionsTab() {
     setLoading(true)
     setError(null)
     api
-      .weekdaySessions(ticker, weekday, live, 10)
+      .weekdaySessions(ticker, weekday, live, 20)
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
@@ -608,10 +650,13 @@ export function WeekdaySessionsTab() {
     <div>
       <h3>Weekday Sessions — Prev Close, High, Low, Close</h3>
       <p className="muted">
-        Pull the last <strong>10 sessions</strong> for a chosen weekday (Mon–Fri only).
+        Pull the last <strong>20 sessions</strong> for a chosen weekday (Mon–Fri only).
         <strong> Prev Close</strong> is the prior trading day&apos;s close before each session.
         <strong> Close</strong> is <span className="close-up-inline">green</span> when above prev close,{' '}
         <span className="close-down-inline">red</span> when below.
+        Today&apos;s session uses the <strong>live last price</strong> when fetched live;{' '}
+        <span className="session-row-live-inline">blue row</span> = live,{' '}
+        <span className="session-row-cache-inline">grey row</span> = cached snapshot.
       </p>
 
       <DataModeBanner live={live} />
@@ -656,6 +701,10 @@ export function WeekdaySessionsTab() {
             {data.ticker} · {data.weekday} · {data.sessions_returned} session(s) ·{' '}
             {data.data_source === 'live' ? 'live' : 'cache'}
           </p>
+          <CacheUpdatedBanner
+            live={live}
+            cacheUpdatedAt={data.cache_meta?.cache_updated_at}
+          />
           <WeekdaySessionsTable rows={data.rows} />
         </>
       )}
@@ -664,9 +713,9 @@ export function WeekdaySessionsTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Last 12 days — consecutive trading sessions OHLC
+// Last 20 days — consecutive trading sessions OHLC
 // ---------------------------------------------------------------------------
-function Last12DaysTable({
+function Last20DaysTable({
   rows,
 }: {
   rows: import('../api').RecentSessionsResponse['rows']
@@ -692,7 +741,7 @@ function Last12DaysTable({
             const delta =
               row['Prev Close'] != null ? row.Close - row['Prev Close'] : null
             return (
-              <tr key={row.Date}>
+              <tr key={row.Date} className={sessionRowClassName(row)}>
                 <td>{row.Date}</td>
                 <td>{row.Weekday}</td>
                 <td>{formatMoney(row.Open)}</td>
@@ -720,11 +769,12 @@ function Last12DaysTable({
           })}
         </tbody>
       </table>
+      <SessionCloseSummary rows={rows} />
     </div>
   )
 }
 
-export function Last12DaysTab() {
+export function Last20DaysTab() {
   const [ticker, setTicker] = useState('SPY')
   const [live, setLive] = useState(false)
   const [data, setData] = useState<import('../api').RecentSessionsResponse | null>(null)
@@ -735,7 +785,7 @@ export function Last12DaysTab() {
     setLoading(true)
     setError(null)
     api
-      .recentSessions(ticker, live, 12)
+      .recentSessions(ticker, live, 20)
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
@@ -743,12 +793,15 @@ export function Last12DaysTab() {
 
   return (
     <div>
-      <h3>Last 12 Days — Open, High, Low, Close</h3>
+      <h3>Last 20 Days — Open, High, Low, Close</h3>
       <p className="muted">
-        Pull the last <strong>12 trading sessions</strong> (most recent calendar days with a bar).
+        Pull the last <strong>20 trading sessions</strong> (Mon–Fri working days with a bar).
         <strong> Close</strong> is <span className="close-up-inline">green</span> when above the
         prior session&apos;s close, <span className="close-down-inline">red</span> when below, with
         percent change shown as <strong>(+0.10)</strong> or <strong>(−0.10)</strong>.
+        Today&apos;s session uses the <strong>live last price</strong> when fetched live;{' '}
+        <span className="session-row-live-inline">blue row</span> = live,{' '}
+        <span className="session-row-cache-inline">grey row</span> = cached snapshot.
       </p>
 
       <DataModeBanner live={live} />
@@ -779,9 +832,291 @@ export function Last12DaysTab() {
             {data.ticker} · {data.sessions_returned} session(s) ·{' '}
             {data.data_source === 'live' ? 'live' : 'cache'}
           </p>
-          <Last12DaysTable rows={data.rows} />
+          <CacheUpdatedBanner
+            live={live}
+            cacheUpdatedAt={data.cache_meta?.cache_updated_at}
+          />
+          <Last20DaysTable rows={data.rows} />
         </>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SPX / floor-trader pivot levels
+// ---------------------------------------------------------------------------
+function pivotKindClass(kind: string): string {
+  if (kind === 'resistance') return 'level-resistance'
+  if (kind === 'pivot') return 'level-pivot'
+  return 'level-support'
+}
+
+function PivotLevelsTable({ levels }: { levels: import('../api').PivotLevelRow[] }) {
+  return (
+    <div className="table-wrap pivot-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Level</th>
+            <th>Price</th>
+            <th>Notes</th>
+            <th>Today</th>
+          </tr>
+        </thead>
+        <tbody>
+          {levels.map((row) => (
+            <tr key={`${row.Label}-${row.Price}`} className={pivotKindClass(row.Kind)}>
+              <td>{row.Label}</td>
+              <td>{formatMoney(row.Price)}</td>
+              <td className="muted-cell">{row.Notes}</td>
+              <td>{row.Today ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function PivotLevelsHelpPopup({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  if (!open) return null
+
+  return (
+    <div className="help-modal-backdrop" onClick={onClose} role="presentation">
+      <div
+        className="help-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="pivot-help-title"
+        aria-modal="true"
+      >
+        <div className="help-modal-header">
+          <h4 id="pivot-help-title">Floor trader pivots — PP, R1–R3, S1–S3</h4>
+          <button type="button" className="help-modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="help-modal-body">
+          <p>
+            All levels come from the <strong>prior session</strong> high (H), low (L), and close
+            (C). They are the same formulas many &quot;key levels&quot; newsletters use.
+          </p>
+          <p className="help-formula">
+            <strong>PP (Pivot)</strong> = (H + L + C) ÷ 3 — the center line for the next session.
+          </p>
+          <table className="help-table">
+            <thead>
+              <tr>
+                <th>Level</th>
+                <th>Formula</th>
+                <th>Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>R1</td>
+                <td>2×PP − L</td>
+                <td>First resistance above pivot</td>
+              </tr>
+              <tr>
+                <td>R2</td>
+                <td>PP + (H − L)</td>
+                <td>Second resistance — common rejection zone</td>
+              </tr>
+              <tr>
+                <td>R3</td>
+                <td>H + 2×(PP − L)</td>
+                <td>Third resistance — extension if R2 breaks</td>
+              </tr>
+              <tr>
+                <td>S1</td>
+                <td>2×PP − H</td>
+                <td>First support below pivot</td>
+              </tr>
+              <tr>
+                <td>S2</td>
+                <td>PP − (H − L)</td>
+                <td>Second support</td>
+              </tr>
+              <tr>
+                <td>S3</td>
+                <td>L − 2×(H − PP)</td>
+                <td>Third support — deep extension</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="muted">
+            The tab also shows <strong>Prior High</strong>, <strong>Prior Close</strong>, and{' '}
+            <strong>Prior Low</strong> — yesterday&apos;s actual prices on the same ladder, not
+            separate formulas.
+          </p>
+          <p className="muted">
+            <strong>How to read it:</strong> rallies often stall at R1/R2; losing PP can accelerate
+            selling toward S1/S2/S3. Prior high and prior close often matter as much as the
+            calculated levels.
+          </p>
+        </div>
+        <div className="help-modal-footer">
+          <button type="button" className="btn primary" onClick={onClose}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function SpxPivotsTab() {
+  const [ticker, setTicker] = useState('^GSPC')
+  const [live, setLive] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [data, setData] = useState<import('../api').PivotLevelsResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    setError(null)
+    api
+      .pivotLevels(ticker, live)
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    if (!helpOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHelpOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [helpOpen])
+
+  return (
+    <div>
+      <h3>SPX Pivots — Floor Trader Key Levels</h3>
+      <p className="muted">
+        Classic floor-trader pivots from the <strong>prior session</strong> high, low, and close:{' '}
+        <strong>PP = (H + L + C) / 3</strong>, then R1–R3 above and S1–S3 below. Prior day H/L/C
+        are listed too — same math newsletters use. Default is <strong>^GSPC</strong> (S&P 500
+        index); try <strong>SPY</strong> to match your sheet.
+      </p>
+
+      <DataModeBanner live={live} />
+
+      <div className="form-row">
+        <label>
+          Symbol
+          <input
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            placeholder="^GSPC"
+          />
+        </label>
+        <div className="quick-tickers">
+          <button type="button" className="btn-sm" onClick={() => setTicker('^GSPC')}>
+            SPX
+          </button>
+          <button type="button" className="btn-sm" onClick={() => setTicker('SPY')}>
+            SPY
+          </button>
+        </div>
+        <label className="checkbox">
+          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+          Fetch live data
+        </label>
+        <button type="button" className="btn primary" onClick={load} disabled={loading}>
+          {loading ? 'Loading…' : 'Compute levels'}
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {data && (
+        <>
+          <p className="muted">
+            {data.display_name} ({data.ticker}) · {data.data_source === 'live' ? 'live' : 'cache'}
+            {data.session_date ? ` · session ${data.session_date}` : ''}
+          </p>
+          <CacheUpdatedBanner live={live} cacheUpdatedAt={data.cache_meta?.cache_updated_at} />
+
+          <div className="pivot-prior-box">
+            <h4>Prior session — {data.prior_session.Weekday} {data.prior_session.Date}</h4>
+            <p>
+              High {formatMoney(data.prior_session.High)} · Low{' '}
+              {formatMoney(data.prior_session.Low)} · Close{' '}
+              {formatMoney(data.prior_session.Close)}
+            </p>
+            <p className="muted formula">{data.formula}</p>
+          </div>
+
+          {data.today && (
+            <div
+              className={`pivot-today-box ${
+                data.today['Row Source'] === 'live' ? 'session-row-live' : 'session-row-cache'
+              }`}
+            >
+              <h4>
+                Today — {data.today.Weekday} {data.today.Date}
+                {data.today['Row Source'] === 'live' ? ' (live)' : ' (cache)'}
+              </h4>
+              <p>
+                Open {formatMoney(data.today.Open)} · High {formatMoney(data.today.High)} · Low{' '}
+                {formatMoney(data.today.Low)} · Close {formatMoney(data.today.Close)}
+              </p>
+            </div>
+          )}
+
+          <h4 className="pivot-section-title">Key levels (high → low)</h4>
+          <PivotLevelsTable levels={data.levels} />
+
+          {(data.summary_lines.length > 0 || data.next_resistance) && (
+            <div className="pivot-summary">
+              <h4>Today vs levels</h4>
+              {data.next_resistance && (
+                <p className="pivot-next-resistance">
+                  <strong>Next resistance to watch:</strong>{' '}
+                  {data.next_resistance.Label} at {formatMoney(data.next_resistance.Price)}
+                  {' '}
+                  ({formatMoney(data.next_resistance.Distance)} /{' '}
+                  {data.next_resistance['Distance Pct'] >= 0 ? '+' : ''}
+                  {data.next_resistance['Distance Pct'].toFixed(2)}% above close)
+                  {data.next_resistance.Kind === 'pivot' && (
+                    <span className="muted"> — pivot acts as resistance from here</span>
+                  )}
+                </p>
+              )}
+              <ul>
+                {data.summary_lines
+                  .filter(
+                    (line) =>
+                      !line.startsWith('Next resistance to watch:') &&
+                      !line.startsWith('Next resistance ') &&
+                      !line.startsWith('Next pivot '),
+                  )
+                  .map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="pivot-help-footer">
+        <button type="button" className="btn-sm pivot-help-btn" onClick={() => setHelpOpen(true)}>
+          Help — What are PP, R1–R3, and S1–S3?
+        </button>
+      </div>
+      <PivotLevelsHelpPopup open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }
