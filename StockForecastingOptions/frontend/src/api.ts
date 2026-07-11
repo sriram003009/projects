@@ -182,6 +182,71 @@ export interface PivotLevelsResponse {
   cache_meta?: CacheMeta | null
 }
 
+export interface VixSpySignalLayer {
+  Layer: string
+  Reading: string
+  Bias: string
+  Aligned: boolean
+}
+
+export interface VixSpySignalResponse {
+  signal: 'BUY CALL' | 'BUY PUT' | 'NO TRADE'
+  confidence_pct: number
+  confidence_label: 'High' | 'Medium' | 'Low'
+  summary: string
+  disclaimer: string
+  regime: 'Contango' | 'Backwardation'
+  stress: 'EXTREME_HIGH' | 'EXTREME_LOW' | 'NORMAL'
+  trend: 'Bullish' | 'Bearish' | 'Neutral'
+  rule_matched: string
+  context_note?: string | null
+  reasons: string[]
+  layers: VixSpySignalLayer[]
+  term_structure: {
+    vix_symbol: string
+    vix3m_symbol: string
+    vix_close: number
+    vix3m_close: number
+    ratio: number
+    backwardation_threshold: number
+  }
+  vix_stress: {
+    zscore: number
+    lookback_days: number
+    mean: number
+    std: number
+    extreme_high_threshold: number
+    extreme_low_threshold: number
+  }
+  spy_technicals: {
+    symbol: string
+    close: number
+    vwap?: number | null
+    ema9: number
+    ema20: number
+    rsi14?: number | null
+    above_vwap?: boolean
+    ema_stack_bull?: boolean
+    ema_stack_bear?: boolean
+  }
+  suggested_strike?: {
+    option_type: 'Call' | 'Put'
+    reference_price: number
+    atm_strike: number
+    example_strike: number
+    delta_band: string
+    notes: string
+  } | null
+  thresholds?: Record<string, number>
+  live_fetch?: boolean
+  data_source?: string
+  cache_meta?: {
+    spy?: CacheMeta | null
+    vix?: CacheMeta | null
+    vix3m?: CacheMeta | null
+  }
+}
+
 export const api = {
   health: () => request<{ status: string }>('/api/health'),
 
@@ -279,6 +344,12 @@ export const api = {
     request<PivotLevelsResponse>('/api/pivot-levels', {
       method: 'POST',
       body: JSON.stringify({ ticker, live_fetch: liveFetch }),
+    }),
+
+  vixSpySignal: (liveFetch: boolean) =>
+    request<VixSpySignalResponse>('/api/vix-spy-signal', {
+      method: 'POST',
+      body: JSON.stringify({ live_fetch: liveFetch }),
     }),
 
   summary: (liveFetch: boolean) =>

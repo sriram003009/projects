@@ -23,6 +23,7 @@ from backend.schemas import (
     TomorrowWatchlistAddRequest,
     PivotLevelsRequest,
     RecentSessionsRequest,
+    VixSpySignalRequest,
     WeekdaySessionsRequest,
     WhatIfRequest,
 )
@@ -41,6 +42,7 @@ from services import tomorrow_watchlist as tw
 from services import pivot_levels as piv
 from services import recent_sessions as rs
 from services import weekday_sessions as wds
+from services import vix_spy_signal as vss
 
 app = FastAPI(
     title="Options Lookup API",
@@ -209,6 +211,18 @@ def pivot_levels(body: PivotLevelsRequest) -> dict[str, Any]:
     """Floor-trader pivot ladder from prior session H/L/C."""
     try:
         return piv.get_pivot_levels(body.ticker, live_fetch=body.live_fetch)
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.post("/api/vix-spy-signal")
+def vix_spy_signal(body: VixSpySignalRequest) -> dict[str, Any]:
+    """VIX regime + SPY technical confirmation → Call / Put / No Trade."""
+    try:
+        return vss.get_vix_spy_signal(
+            live_fetch=body.live_fetch,
+            thresholds=body.thresholds,
+        )
     except ServiceError as exc:
         raise _http_error(exc) from exc
 

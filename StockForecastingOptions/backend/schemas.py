@@ -61,6 +61,18 @@ class PivotLevelsRequest(BaseModel):
     live_fetch: bool = False
 
 
+class VixSpySignalRequest(BaseModel):
+    live_fetch: bool = False
+    thresholds: dict[str, float | int] | None = Field(
+        default=None,
+        description=(
+            "Optional overrides: term_structure_backwardation, vix_zscore_extreme_high, "
+            "vix_zscore_extreme_low, vix_zscore_lookback, rsi_bullish_min, rsi_bearish_max, "
+            "vwap_lookback, ema_fast, ema_slow"
+        ),
+    )
+
+
 class CacheClearRequest(BaseModel):
     confirm: bool = False
     symbol: str | None = None

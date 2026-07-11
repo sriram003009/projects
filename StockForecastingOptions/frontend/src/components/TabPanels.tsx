@@ -1,10 +1,86 @@
 import { useEffect, useState } from 'react'
 import Plot from 'react-plotly.js'
-import { api, type MoversResponse } from '../api'
+import { api, type MoversResponse, type VixSpySignalResponse } from '../api'
 import { CacheHintBanner, CacheUpdatedBanner, DataModeBanner } from './DataModeBanner'
 import type { ContractForm, ContractLookup } from '../types'
 import { DataTable } from './DataTable'
 import { PriceChart } from './PriceChart'
+
+// ---------------------------------------------------------------------------
+// Last 30 sessions — contract OHLC (Recent Activity + Cached Data)
+// ---------------------------------------------------------------------------
+function withPrevClose(
+  sessions: import('../types').SessionRow[],
+): (import('../types').SessionRow & { 'Prev Close': number | null })[] {
+  return sessions.map((row, i) => ({
+    ...row,
+    'Prev Close': i > 0 ? sessions[i - 1].Close : null,
+  }))
+}
+
+function formatClosePct(delta: number, prevClose: number): string {
+  const pct = (delta / prevClose) * 100
+  const sign = pct >= 0 ? '+' : '−'
+  return `(${sign}${Math.abs(pct).toFixed(2)} %)`
+}
+
+function ContractSessionsTable({ sessions }: { sessions: import('../types').SessionRow[] }) {
+  const rows = withPrevClose(sessions)
+  if (!rows.length) return <p className="muted">No sessions.</p>
+
+  return (
+    <div className="table-wrap weekday-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Open</th>
+            <th>High</th>
+            <th>Low</th>
+            <th>Close</th>
+            <th>Stock Close</th>
+            <th>Volume</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const dir = closeDirection(row.Close, row['Prev Close'])
+            const delta =
+              row['Prev Close'] != null ? row.Close - row['Prev Close'] : null
+            return (
+              <tr key={row.Date}>
+                <td>{row.Date}</td>
+                <td>{formatMoney(row.Open)}</td>
+                <td>{formatMoney(row.High)}</td>
+                <td>{formatMoney(row.Low)}</td>
+                <td
+                  className={
+                    dir === 'up'
+                      ? 'close-up'
+                      : dir === 'down'
+                        ? 'close-down'
+                        : 'close-flat'
+                  }
+                >
+                  {formatMoney(row.Close)}
+                  {delta != null && row['Prev Close'] != null && dir !== 'unknown' && (
+                    <span className="close-delta">
+                      {' '}
+                      {formatClosePct(delta, row['Prev Close'])}
+                    </span>
+                  )}
+                </td>
+                <td>{formatMoney(row['Stock Close'])}</td>
+                <td>{row.Volume?.toLocaleString() ?? '—'}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <SessionCloseSummary rows={rows} />
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Recent Activity
@@ -50,7 +126,12 @@ export function RecentActivityTab({ contract }: { contract: ContractLookup | nul
       )}
 
       <h4>Last 30 Trading Sessions</h4>
-      <DataTable rows={contract.sessions as unknown as Record<string, unknown>[]} />
+      <p className="muted">
+        OHLCV is for the <strong>option contract</strong>. <strong>Close</strong> is{' '}
+        <span className="close-up-inline">green</span> when above the prior session&apos;s close,{' '}
+        <span className="close-down-inline">red</span> when below.
+      </p>
+      <ContractSessionsTable sessions={contract.sessions} />
       <PriceChart sessions={contract.sessions} />
     </div>
   )
@@ -479,6 +560,334 @@ export function CallsPutsTab() {
           <DataTable rows={(data?.top_put_strikes as Record<string, unknown>[]) ?? []} />
         </>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// VIX term structure → SPY Call / Put / No Trade signal
+// ---------------------------------------------------------------------------
+function vixSignalClass(signal: string): string {
+  if (signal === 'BUY CALL') return 'signal-bullish'
+  if (signal === 'BUY PUT') return 'signal-bearish'
+  return 'signal-unknown'
+}
+
+function biasClass(bias: string): string {
+  if (bias === 'Call') return 'close-up-inline'
+  if (bias === 'Put') return 'close-down-inline'
+  return 'session-row-cache-inline'
+}
+
+function VixSignalHelpPopup({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  if (!open) return null
+
+  return (
+    <div className="help-modal-backdrop" onClick={onClose} role="presentation">
+      <div
+        className="help-modal vix-help-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="vix-help-title"
+        aria-modal="true"
+      >
+        <div className="help-modal-header">
+          <h4 id="vix-help-title">When does it say CALL, PUT, or NO TRADE?</h4>
+          <button type="button" className="help-modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="help-modal-body">
+          <p>The computer only picks a trade when all three checks fit one of these rows:</p>
+          <table className="help-table">
+            <thead>
+              <tr>
+                <th>Mood of VIX</th>
+                <th>Fear level</th>
+                <th>SPY direction</th>
+                <th>Answer</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Calm (Contango)</td>
+                <td>Normal</td>
+                <td>Up (Bullish)</td>
+                <td>BUY CALL</td>
+              </tr>
+              <tr>
+                <td>Calm (Contango)</td>
+                <td>Normal</td>
+                <td>Down (Bearish)</td>
+                <td>BUY PUT</td>
+              </tr>
+              <tr>
+                <td>Scared (Backwardation)</td>
+                <td>Very high fear</td>
+                <td>Up (Bullish)</td>
+                <td>BUY CALL (bounce)</td>
+              </tr>
+              <tr>
+                <td>Scared (Backwardation)</td>
+                <td>Very high fear</td>
+                <td>Down (Bearish)</td>
+                <td>NO TRADE (too wild)</td>
+              </tr>
+              <tr>
+                <td>Any</td>
+                <td>Very low fear</td>
+                <td>Down (Bearish)</td>
+                <td>BUY PUT</td>
+              </tr>
+              <tr>
+                <td>Anything else</td>
+                <td>—</td>
+                <td>Not clear</td>
+                <td>NO TRADE</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="muted">
+            Example: SPY trend can be <strong>Bullish</strong> but you still get{' '}
+            <strong>NO TRADE</strong> if fear is <strong>very low</strong> (complacency) — that
+            combo is not in the table above.
+          </p>
+        </div>
+        <div className="help-modal-footer">
+          <button type="button" className="btn primary" onClick={onClose}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function VixSignalHelpNotes() {
+  return (
+    <div className="vix-help-notes">
+      <h4>Notes — how to read this (simple version)</h4>
+      <ul>
+        <li>
+          <strong>SPY</strong> is like a big basket of US stocks. When its trend is{' '}
+          <strong>Bullish</strong>, price has been going <em>up</em> lately (above its average
+          prices and RSI &gt; 50).
+        </li>
+        <li>
+          <strong>VIX</strong> is the &quot;fear meter.&quot; High VIX = people are nervous. Low VIX
+          = people are relaxed — sometimes <em>too</em> relaxed.
+        </li>
+        <li>
+          <strong>BUY CALL</strong> = the tool thinks SPY might go up (a call option bets on up).{' '}
+          <strong>BUY PUT</strong> = it thinks SPY might go down.{' '}
+          <strong>NO TRADE</strong> = wait — the three checks don&apos;t line up enough.
+        </li>
+        <li>
+          There are <strong>three checks</strong>: (1) VIX term structure — calm vs scared, (2) VIX
+          stress — fear very high, very low, or normal, (3) SPY trend — up, down, or unclear.
+        </li>
+        <li>
+          <strong>Why &quot;Bullish&quot; but NO TRADE?</strong> Trend is only one check. Example:
+          SPY looks strong, but VIX can be <strong>extremely low</strong> (complacency). The rules
+          won&apos;t say BUY CALL until fear is &quot;normal,&quot; and won&apos;t say BUY PUT until
+          SPY turns bearish.
+        </li>
+        <li>
+          <strong>Confidence %</strong> is like a grade: more checks agreeing = higher score. This
+          is a rules-based hint, not a promise — always ask an adult before real money.
+        </li>
+      </ul>
+    </div>
+  )
+}
+
+export function VixSpySignalTab() {
+  const [live, setLive] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [data, setData] = useState<VixSpySignalResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = () => {
+    setLoading(true)
+    setError(null)
+    api
+      .vixSpySignal(live)
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    if (!helpOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHelpOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [helpOpen])
+
+  return (
+    <div>
+      <h3>VIX → SPY Call / Put Signal</h3>
+      <p className="muted">
+        Three-layer rules engine: <strong>VIX term structure</strong> (VIX / VIX3M),{' '}
+        <strong>VIX z-score stress</strong>, and <strong>SPY trend</strong> (VWAP, EMA9/20, RSI).
+        Outputs <strong>BUY CALL</strong>, <strong>BUY PUT</strong>, or <strong>NO TRADE</strong>.
+        Thresholds are tunable starting points for backtesting.
+      </p>
+
+      <DataModeBanner live={live} />
+      <div className="form-row">
+        <label className="checkbox">
+          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+          Fetch live data
+        </label>
+        <button type="button" className="btn primary" onClick={run} disabled={loading}>
+          {loading ? 'Computing…' : 'Run signal'}
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {data && (
+        <>
+          <div className="vix-signal-hero">
+            <span className={`signal-pill vix-signal-pill ${vixSignalClass(data.signal)}`}>
+              {data.signal}
+            </span>
+            <span className="vix-confidence muted">
+              Confidence: <strong>{data.confidence_pct}%</strong> ({data.confidence_label})
+            </span>
+            <p className="vix-summary">{data.summary}</p>
+            <p className="muted vix-scores">
+              Regime: <strong>{data.regime}</strong> · Stress: <strong>{data.stress}</strong> ·
+              Trend: <strong>{data.trend}</strong>
+              {data.data_source ? ` · ${data.data_source}` : ''}
+            </p>
+            {data.signal === 'NO TRADE' && data.context_note && (
+              <p className="banner info vix-context-note">{data.context_note}</p>
+            )}
+          </div>
+
+          <div className="vix-metrics-grid">
+            <div className="vix-metric-card">
+              <h4>Term structure</h4>
+              <p className="vix-metric-value">{data.term_structure.ratio.toFixed(3)}</p>
+              <p className="muted">
+                VIX {data.term_structure.vix_close.toFixed(2)} ÷ VIX3M{' '}
+                {data.term_structure.vix3m_close.toFixed(2)}
+              </p>
+              <p className="muted">
+                Regime: <strong>{data.regime}</strong> (threshold &gt;{' '}
+                {data.term_structure.backwardation_threshold.toFixed(2)} = backwardation)
+              </p>
+            </div>
+            <div className="vix-metric-card">
+              <h4>VIX stress (z-score)</h4>
+              <p className="vix-metric-value">
+                {data.vix_stress.zscore >= 0 ? '+' : ''}
+                {data.vix_stress.zscore.toFixed(2)}
+              </p>
+              <p className="muted">
+                Level: <strong>{data.stress}</strong> · {data.vix_stress.lookback_days}d μ=
+                {data.vix_stress.mean.toFixed(2)} σ={data.vix_stress.std.toFixed(2)}
+              </p>
+              <p className="muted">
+                High &gt; {data.vix_stress.extreme_high_threshold} · Low &lt;{' '}
+                {data.vix_stress.extreme_low_threshold}
+              </p>
+            </div>
+            <div className="vix-metric-card">
+              <h4>SPY trend</h4>
+              <p className="vix-metric-value">{formatMoney(data.spy_technicals.close)}</p>
+              <p className="muted">
+                Trend: <strong>{data.trend}</strong>
+                {data.spy_technicals.rsi14 != null
+                  ? ` · RSI ${data.spy_technicals.rsi14.toFixed(1)}`
+                  : ''}
+              </p>
+              <p className="muted">
+                VWAP {formatMoney(data.spy_technicals.vwap)} · EMA9{' '}
+                {formatMoney(data.spy_technicals.ema9)} · EMA20{' '}
+                {formatMoney(data.spy_technicals.ema20)}
+              </p>
+            </div>
+          </div>
+
+          {data.suggested_strike && (
+            <div className="vix-strike-box">
+              <h4>Suggested strike logic</h4>
+              <p>
+                <strong>{data.suggested_strike.option_type}</strong> · example strike{' '}
+                <strong>${data.suggested_strike.example_strike}</strong> (ATM ${data.suggested_strike.atm_strike})
+                · delta band <strong>{data.suggested_strike.delta_band}</strong>
+              </p>
+              <p className="muted">{data.suggested_strike.notes}</p>
+            </div>
+          )}
+
+          {data.reasons.length > 0 && (
+            <div className="pivot-summary vix-reasons">
+              <h4>Why this signal</h4>
+              <ul>
+                {data.reasons.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <h4>Layer alignment (confidence)</h4>
+          <div className="table-wrap vix-checks-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Layer</th>
+                  <th>Reading</th>
+                  <th>Bias</th>
+                  <th>Aligned</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.layers.map((row) => (
+                  <tr key={row.Layer}>
+                    <td>{row.Layer}</td>
+                    <td>{row.Reading}</td>
+                    <td>
+                      <span className={biasClass(row.Bias)}>{row.Bias}</span>
+                    </td>
+                    <td>{row.Aligned ? '✓' : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="muted vix-disclaimer">{data.disclaimer}</p>
+          {data.thresholds && (
+            <p className="muted vix-thresholds">
+              Active thresholds: term ratio &gt; {data.thresholds.term_structure_backwardation} →
+              backwardation · z high &gt; {data.thresholds.vix_zscore_extreme_high} · z low &lt;{' '}
+              {data.thresholds.vix_zscore_extreme_low}
+            </p>
+          )}
+        </>
+      )}
+
+      <VixSignalHelpNotes />
+      <div className="pivot-help-footer">
+        <button type="button" className="btn-sm pivot-help-btn" onClick={() => setHelpOpen(true)}>
+          Help — When does it say CALL, PUT, or NO TRADE?
+        </button>
+      </div>
+      <VixSignalHelpPopup open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }
@@ -1298,7 +1707,9 @@ export function CachedDataTab({
       </select>
       {detail && (
         <>
-          <DataTable rows={(detail.sessions as Record<string, unknown>[]) ?? []} />
+          <ContractSessionsTable
+            sessions={(detail.sessions as import('../types').SessionRow[]) ?? []}
+          />
           <PriceChart
             sessions={(detail.sessions as import('../types').SessionRow[]) ?? []}
             title="Cached contract history"
