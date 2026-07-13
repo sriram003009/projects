@@ -73,6 +73,17 @@ class VixSpySignalRequest(BaseModel):
     )
 
 
+class GexRequest(BaseModel):
+    ticker: str = Field("SPY", min_length=1)
+    expiration_filter: Literal["all", "0dte", "nearest", "custom"] = "nearest"
+    custom_date: str | None = Field(
+        default=None,
+        description="YYYY-MM-DD or MM/DD when expiration_filter=custom",
+    )
+    view: Literal["total", "0dte"] = "total"
+    live_fetch: bool = False
+
+
 class CacheClearRequest(BaseModel):
     confirm: bool = False
     symbol: str | None = None

@@ -16,6 +16,7 @@ import {
   Last20DaysTab,
   SpxPivotsTab,
   VixSpySignalTab,
+  GexTab,
 } from './components/TabPanels'
 import type { ContractForm, ContractLookup } from './types'
 import './App.css'
@@ -32,6 +33,7 @@ const TABS = [
   { id: 'summary', label: 'Quick Summary', row: 2, color: 'tab-teal' },
   { id: 'sma', label: 'Check SMA', row: 2, color: 'tab-indigo' },
   { id: 'pcr', label: 'Calls vs Puts', row: 2, color: 'tab-rose' },
+  { id: 'gex', label: 'GEX', row: 2, color: 'tab-emerald' },
   { id: 'vix', label: 'VIX → SPY Signal', row: 2, color: 'tab-gold' },
   { id: 'cached', label: 'Cached Data', row: 2, color: 'tab-stone' },
 ] as const
@@ -140,7 +142,7 @@ function App() {
           <p className="caption">
             <strong>Row 1 — Contract:</strong> Recent Activity · 5-Day Forecasts · What-If · Track the Best
             <br />
-            <strong>Row 2 — Scanners:</strong> Weekday Sessions · Last 20 Days · SPX Pivots · Stocks on Watchlist · Quick Summary · Check SMA · Calls vs Puts · VIX → SPY Signal · Cached Data
+            <strong>Row 2 — Scanners:</strong> Weekday Sessions · Last 20 Days · SPX Pivots · Stocks on Watchlist · Quick Summary · Check SMA · Calls vs Puts · GEX · VIX → SPY Signal · Cached Data
           </p>
         </header>
 
@@ -174,6 +176,7 @@ function App() {
           {activeTab === 'summary' && <QuickSummaryTab />}
           {activeTab === 'sma' && <CheckSmaTab />}
           {activeTab === 'pcr' && <CallsPutsTab />}
+          {activeTab === 'gex' && <GexTab />}
           {activeTab === 'vix' && <VixSpySignalTab />}
           {activeTab === 'cached' && <CachedDataTab onLoadContract={loadFromCache} />}
         </section>

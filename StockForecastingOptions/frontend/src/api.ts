@@ -256,6 +256,40 @@ export interface VixSpySignalResponse {
   }
 }
 
+export interface GexStrikeRow {
+  strike: number
+  call_gex: number
+  put_gex: number
+  net_gex: number
+  abs_net_gex: number
+}
+
+export interface GexResponse {
+  ticker: string
+  spot: number
+  expiration_filter: string
+  expiration_label: string
+  expirations_used: string[]
+  view: 'total' | '0dte'
+  has_0dte: boolean
+  odte_date?: string | null
+  metrics: {
+    net_gex: number
+    call_gex: number
+    put_gex: number
+    gamma_flip?: number | null
+    regime: string
+  }
+  call_wall?: { strike: number; gex: number } | null
+  put_wall?: { strike: number; gex: number } | null
+  gamma_flip?: number | null
+  by_strike: GexStrikeRow[]
+  formula: string
+  disclaimer: string
+  live_fetch?: boolean
+  data_source?: string
+}
+
 export const api = {
   health: () => request<{ status: string }>('/api/health'),
 
@@ -359,6 +393,23 @@ export const api = {
     request<VixSpySignalResponse>('/api/vix-spy-signal', {
       method: 'POST',
       body: JSON.stringify({ live_fetch: liveFetch }),
+    }),
+
+  gex: (
+    ticker: string,
+    expirationFilter: 'all' | '0dte' | 'nearest' | 'custom',
+    liveFetch: boolean,
+    options?: { customDate?: string; view?: 'total' | '0dte' },
+  ) =>
+    request<GexResponse>('/api/gex', {
+      method: 'POST',
+      body: JSON.stringify({
+        ticker,
+        expiration_filter: expirationFilter,
+        custom_date: options?.customDate ?? null,
+        view: options?.view ?? 'total',
+        live_fetch: liveFetch,
+      }),
     }),
 
   summary: (liveFetch: boolean) =>

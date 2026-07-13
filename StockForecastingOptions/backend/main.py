@@ -24,6 +24,7 @@ from backend.schemas import (
     PivotLevelsRequest,
     RecentSessionsRequest,
     VixSpySignalRequest,
+    GexRequest,
     WeekdaySessionsRequest,
     WhatIfRequest,
 )
@@ -43,6 +44,7 @@ from services import pivot_levels as piv
 from services import recent_sessions as rs
 from services import weekday_sessions as wds
 from services import vix_spy_signal as vss
+from services import gex as gex_svc
 
 app = FastAPI(
     title="Options Lookup API",
@@ -222,6 +224,21 @@ def vix_spy_signal(body: VixSpySignalRequest) -> dict[str, Any]:
         return vss.get_vix_spy_signal(
             live_fetch=body.live_fetch,
             thresholds=body.thresholds,
+        )
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.post("/api/gex")
+def gex_levels(body: GexRequest) -> dict[str, Any]:
+    """Gamma exposure by strike (GEX walls, flip, regime)."""
+    try:
+        return gex_svc.get_gex_levels(
+            body.ticker,
+            expiration_filter=body.expiration_filter,
+            custom_date=body.custom_date,
+            live_fetch=body.live_fetch,
+            view=body.view,
         )
     except ServiceError as exc:
         raise _http_error(exc) from exc

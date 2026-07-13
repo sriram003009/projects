@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Plot from 'react-plotly.js'
-import { api, type MoversResponse, type VixSpySignalResponse } from '../api'
+import { api, type GexResponse, type MoversResponse, type VixSpySignalResponse } from '../api'
 import { CacheHintBanner, CacheUpdatedBanner, DataModeBanner } from './DataModeBanner'
 import type { ContractForm, ContractLookup } from '../types'
 import { DataTable } from './DataTable'
@@ -984,6 +984,663 @@ export function VixSpySignalTab() {
         </button>
       </div>
       <VixSignalHelpPopup open={helpOpen} onClose={() => setHelpOpen(false)} />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Gamma exposure (GEX) by strike
+// ---------------------------------------------------------------------------
+const GEX_QUICK_TICKERS = ['SPY', 'QQQ', 'IWM', 'TSLA', 'NVDA'] as const
+
+type GexLean = 'CALL' | 'PUT' | 'RANGE' | 'WAIT'
+
+function gexLeanHeroClass(lean: GexLean): string {
+  if (lean === 'CALL') return 'vix-signal-hero vix-hero-call'
+  if (lean === 'PUT') return 'vix-signal-hero vix-hero-put'
+  if (lean === 'RANGE') return 'vix-signal-hero gex-hero-range'
+  return 'vix-signal-hero vix-hero-none'
+}
+
+function gexLeanPillClass(lean: GexLean): string {
+  if (lean === 'CALL') return 'signal-bullish vix-signal-call'
+  if (lean === 'PUT') return 'signal-bearish vix-signal-put'
+  if (lean === 'RANGE') return 'signal-unknown gex-signal-range'
+  return 'signal-unknown vix-signal-none'
+}
+
+function gexLeanLabel(lean: GexLean): string {
+  if (lean === 'CALL') return 'LEAN CALL'
+  if (lean === 'PUT') return 'LEAN PUT'
+  if (lean === 'RANGE') return 'IN THE RANGE — WAIT'
+  return 'WAIT — NO CLEAR SIDE'
+}
+
+function isGex0dteContext(data: GexResponse): boolean {
+  return data.view === '0dte' || data.expiration_filter === '0dte'
+}
+
+function deriveGexPlainEnglish(data: GexResponse): {
+  lean: GexLean
+  headline: string
+  bullets: string[]
+} {
+  const { spot, metrics, call_wall, put_wall, gamma_flip } = data
+  const flip = gamma_flip ?? metrics.gamma_flip ?? null
+  const positive = metrics.regime.includes('Positive')
+  const negative = metrics.regime.includes('Negative')
+  const is0dte = isGex0dteContext(data)
+  const expNote = is0dte ? '0DTE (today)' : 'this expiration set'
+
+  const pctDist = (level: number) => (Math.abs(spot - level) / spot) * 100
+  const putStrike = put_wall?.strike
+  const callStrike = call_wall?.strike
+
+  const nearPct = 0.55
+  const nearPut = putStrike != null && pctDist(putStrike) <= nearPct
+  const nearCall = callStrike != null && pctDist(callStrike) <= nearPct
+  const inHallway =
+    putStrike != null &&
+    callStrike != null &&
+    spot > putStrike &&
+    spot < callStrike
+
+  const belowFlip = flip != null && spot < flip
+  const aboveFlip = flip != null && spot > flip
+
+  const bullets: string[] = []
+
+  if (putStrike != null && callStrike != null) {
+    bullets.push(
+      `Picture a hallway: **floor (put wall) ≈ $${putStrike}**, **ceiling (call wall) ≈ $${callStrike}**. SPY is at **${formatMoney(spot)}**.`,
+    )
+  }
+
+  if (positive) {
+    bullets.push(
+      '**Positive gamma** = big traders often act like **shock absorbers**. Moves can feel **smaller and bouncier** — harder to run far in one direction.',
+    )
+  } else if (negative) {
+    bullets.push(
+      '**Negative gamma** = shock absorbers are **off**. Swings can get **bigger and faster** — be extra careful with 0DTE.',
+    )
+  } else {
+    bullets.push(
+      '**Neutral gamma** = not strongly pinned either way. Use walls and price action more than the regime label.',
+    )
+  }
+
+  if (flip != null) {
+    if (belowFlip) {
+      bullets.push(
+        `SPY is **below** the gamma flip (**${formatMoney(flip)}**). Price can feel **choppier** until it gets above that line.`,
+      )
+    } else if (aboveFlip) {
+      bullets.push(
+        `SPY is **above** the gamma flip (**${formatMoney(flip)}**). Moves **above** that line often feel a bit **calmer / pinned**.`,
+      )
+    } else {
+      bullets.push(`SPY is **right on** the gamma flip (**${formatMoney(flip)}**) — a tug-of-war zone.`)
+    }
+  }
+
+  let lean: GexLean = 'WAIT'
+  let headline = 'No strong CALL or PUT yet — read the hallway first.'
+
+  if (nearPut && positive) {
+    lean = 'CALL'
+    headline = 'Near the floor — CALL only if SPY bounces UP, not if it falls through.'
+    bullets.push(
+      `For **${expNote}**: think **CALL** only if price **holds above** ~$${putStrike} and starts climbing. If it **breaks below** the floor → **PUT** idea instead.`,
+    )
+  } else if (nearCall && positive) {
+    lean = 'PUT'
+    headline = 'Near the ceiling — PUT only if SPY rejects DOWN, not if it blasts through.'
+    bullets.push(
+      `For **${expNote}**: think **PUT** only if price **fails below** ~$${callStrike} after touching it. If it **breaks above** the ceiling → **CALL** idea instead.`,
+    )
+  } else if (inHallway && positive) {
+    lean = 'RANGE'
+    headline = 'Stuck in the middle — neither CALL nor PUT has the green light.'
+    bullets.push(
+      `For **${expNote}**: **WAIT** unless SPY clearly **breaks above** ~$${callStrike} (CALL side) or **below** ~$${putStrike} (PUT side). In the middle = usually **no trade**.`,
+    )
+  } else if (inHallway && negative) {
+    lean = 'WAIT'
+    headline = 'Middle of the hallway + wild gamma — wait for a clear break.'
+    bullets.push(
+      `For **${expNote}**: pick **CALL** only on a strong **break above** ~$${callStrike}, or **PUT** on a strong **break below** ~$${putStrike}. Until then → **WAIT**.`,
+    )
+  } else if (nearPut && negative) {
+    lean = 'PUT'
+    headline = 'Near the floor with wild gamma — PUT if the floor breaks.'
+    bullets.push(
+      `For **${expNote}**: **PUT** if price **slides under** ~$${putStrike}. **CALL** only on a sharp **bounce** that holds above the floor.`,
+    )
+  } else if (nearCall && negative) {
+    lean = 'CALL'
+    headline = 'Near the ceiling with wild gamma — CALL if the ceiling breaks.'
+    bullets.push(
+      `For **${expNote}**: **CALL** if price **punches above** ~$${callStrike}. **PUT** if it **rejects** and turns down hard.`,
+    )
+  } else {
+    bullets.push(
+      `For **${expNote}**: use **CALL** when price is pushing **up through** the call wall area; use **PUT** when pushing **down through** the put wall area. Otherwise **WAIT**.`,
+    )
+  }
+
+  bullets.push(
+    'This is a **map of dealer hedging**, not a promise. Always ask an adult before real money — especially on 0DTE.',
+  )
+
+  return { lean, headline, bullets }
+}
+
+function GexPlainEnglishBlock({ data }: { data: GexResponse }) {
+  const { lean, headline, bullets } = deriveGexPlainEnglish(data)
+  const is0dte = isGex0dteContext(data)
+
+  return (
+    <div className={gexLeanHeroClass(lean)}>
+      <span className={`signal-pill vix-signal-pill ${gexLeanPillClass(lean)}`}>
+        {gexLeanLabel(lean)}
+      </span>
+      <p className="gex-plain-headline">{headline}</p>
+      <ul className="gex-plain-bullets">
+        {bullets.map((text) => (
+          <li key={text.slice(0, 48)}>
+            <GexPlainText text={text} />
+          </li>
+        ))}
+      </ul>
+      <p className="muted gex-plain-meta">
+        Reading: {data.ticker} · {data.expiration_label}
+        {is0dte ? ' · 0DTE focus' : ''} · {data.metrics.regime}
+      </p>
+    </div>
+  )
+}
+
+function GexPlainText({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.startsWith('**') && part.endsWith('**') ? (
+          <strong key={i}>{part.slice(2, -2)}</strong>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  )
+}
+
+function GexHelpPopup({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null
+
+  return (
+    <div className="help-modal-backdrop" onClick={onClose} role="presentation">
+      <div
+        className="help-modal gex-help-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="gex-help-title"
+        aria-modal="true"
+      >
+        <div className="help-modal-header">
+          <h4 id="gex-help-title">Should I buy CALLs or PUTs? (simple rules)</h4>
+          <button type="button" className="help-modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="help-modal-body">
+          <p>
+            GEX is like a map of where big option traders may <strong>slow down</strong> or{' '}
+            <strong>speed up</strong> SPY. It does <em>not</em> tell you the future — it tells you
+            where the &quot;floor,&quot; &quot;ceiling,&quot; and &quot;mood&quot; are.
+          </p>
+          <table className="help-table">
+            <thead>
+              <tr>
+                <th>Where is SPY?</th>
+                <th>Gamma mood</th>
+                <th>Easy read</th>
+                <th>0DTE hint</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Between put wall &amp; call wall</td>
+                <td>Positive</td>
+                <td>
+                  <span className="vix-highlight-none">WAIT / range</span>
+                </td>
+                <td>No clear side — wait for a break of floor or ceiling</td>
+              </tr>
+              <tr>
+                <td>Near put wall (floor)</td>
+                <td>Positive</td>
+                <td>
+                  <span className="vix-highlight-call">Lean CALL bounce</span>
+                </td>
+                <td>CALL only if it bounces UP off the floor</td>
+              </tr>
+              <tr>
+                <td>Near call wall (ceiling)</td>
+                <td>Positive</td>
+                <td>
+                  <span className="vix-highlight-put">Lean PUT fade</span>
+                </td>
+                <td>PUT only if it rejects DOWN from the ceiling</td>
+              </tr>
+              <tr>
+                <td>Breaks below put wall</td>
+                <td>Any</td>
+                <td>
+                  <span className="vix-highlight-put">Lean PUT</span>
+                </td>
+                <td>PUT side — floor failed</td>
+              </tr>
+              <tr>
+                <td>Breaks above call wall</td>
+                <td>Any</td>
+                <td>
+                  <span className="vix-highlight-call">Lean CALL</span>
+                </td>
+                <td>CALL side — ceiling broken</td>
+              </tr>
+              <tr>
+                <td>Between walls</td>
+                <td>Negative</td>
+                <td>
+                  <span className="vix-highlight-none">WAIT for break</span>
+                </td>
+                <td>Bigger swings — pick the direction of the break only</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="muted">
+            <strong>Your example (SPY ~$755, Positive gamma):</strong> floor ~$750, ceiling ~$759,
+            spot in the middle → <strong>WAIT</strong>. For 0DTE, most kids (and pros) skip until
+            price nears a wall or breaks one.
+          </p>
+        </div>
+        <div className="help-modal-footer">
+          <button type="button" className="btn primary" onClick={onClose}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function GexHelpNotes() {
+  return (
+    <div className="gex-help-notes">
+      <h4>Notes — what the numbers mean (kid version)</h4>
+      <ul>
+        <li>
+          <strong>Net GEX</strong> = overall &quot;mood.&quot; <span className="gex-pos">Big
+          positive</span> often means moves get <em>smaller</em> (Positive gamma).{' '}
+          <span className="gex-neg">Big negative</span> can mean moves get <em>bigger</em>.
+        </li>
+        <li>
+          <strong>Call GEX (green)</strong> = call options piled at strikes — like magnets above
+          price. <strong>Put GEX (red)</strong> = put magnets below price.
+        </li>
+        <li>
+          <strong>Put wall</strong> = the <em>floor</em> (biggest put pile). <strong>Call wall</strong>{' '}
+          = the <em>ceiling</em> (biggest call pile). Price often slows or turns near these.
+        </li>
+        <li>
+          <strong>Gamma flip</strong> = the price where mood can switch. <em>Above</em> often calmer;
+          <em> below</em> often choppier.
+        </li>
+        <li>
+          <strong>0DTE</strong> = options that expire <em>today</em>. Walls matter more intraday.
+          <strong> Nearest / All</strong> = wider picture for the next few days/weeks.
+        </li>
+        <li>
+          <span className="vix-highlight-call">LEAN CALL</span> = only if you see price going{' '}
+          <em>up</em> through the ceiling or bouncing off the floor.{' '}
+          <span className="vix-highlight-put">LEAN PUT</span> = only if going <em>down</em> through
+          the floor or rejecting the ceiling. <span className="vix-highlight-none">WAIT</span> = in
+          the hallway with no break yet.
+        </li>
+      </ul>
+    </div>
+  )
+}
+
+function formatGex(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return '—'
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '−' : ''
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`
+  return `${sign}$${abs.toFixed(0)}`
+}
+
+function gexRegimeClass(regime: string): string {
+  if (regime.includes('Positive')) return 'gex-regime-pos'
+  if (regime.includes('Negative')) return 'gex-regime-neg'
+  return 'gex-regime-neutral'
+}
+
+function GexChart({
+  rows,
+  spot,
+  gammaFlip,
+  callWall,
+  putWall,
+}: {
+  rows: import('../api').GexStrikeRow[]
+  spot: number
+  gammaFlip?: number | null
+  callWall?: { strike: number; gex: number } | null
+  putWall?: { strike: number; gex: number } | null
+}) {
+  if (!rows.length) return null
+
+  const strikes = rows.map((r) => r.strike)
+  const callGex = rows.map((r) => r.call_gex)
+  const putGex = rows.map((r) => r.put_gex)
+  const netGex = rows.map((r) => r.net_gex)
+
+  const shapes: Record<string, unknown>[] = [
+    {
+      type: 'line',
+      x0: spot,
+      x1: spot,
+      y0: 0,
+      y1: 1,
+      yref: 'paper',
+      line: { color: '#1565c0', width: 2, dash: 'dot' },
+    },
+  ]
+  const annotations: Record<string, unknown>[] = [
+    { x: spot, y: 1, yref: 'paper', text: 'Spot', showarrow: false, font: { size: 10 } },
+  ]
+
+  if (gammaFlip != null) {
+    shapes.push({
+      type: 'line',
+      x0: gammaFlip,
+      x1: gammaFlip,
+      y0: 0,
+      y1: 1,
+      yref: 'paper',
+      line: { color: '#f57f17', width: 2, dash: 'dash' },
+    })
+    annotations.push({
+      x: gammaFlip,
+      y: 0.98,
+      yref: 'paper',
+      text: 'Gamma flip',
+      showarrow: false,
+      font: { size: 10, color: '#e65100' },
+    })
+  }
+  if (callWall) {
+    annotations.push({
+      x: callWall.strike,
+      y: 0.92,
+      yref: 'paper',
+      text: `Call wall ${callWall.strike}`,
+      showarrow: false,
+      font: { size: 9, color: '#1b5e20' },
+    })
+  }
+  if (putWall) {
+    annotations.push({
+      x: putWall.strike,
+      y: 0.85,
+      yref: 'paper',
+      text: `Put wall ${putWall.strike}`,
+      showarrow: false,
+      font: { size: 9, color: '#c62828' },
+    })
+  }
+
+  return (
+    <Plot
+      data={[
+        {
+          x: strikes,
+          y: callGex,
+          type: 'bar',
+          name: 'Call GEX',
+          marker: { color: 'rgba(46, 125, 50, 0.85)' },
+        },
+        {
+          x: strikes,
+          y: putGex,
+          type: 'bar',
+          name: 'Put GEX',
+          marker: { color: 'rgba(198, 40, 40, 0.85)' },
+        },
+        {
+          x: strikes,
+          y: netGex,
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Net GEX',
+          line: { color: '#5c6bc0', width: 2 },
+        },
+      ]}
+      layout={{
+        title: 'GEX by strike ($ per 1% spot move)',
+        barmode: 'relative',
+        height: 420,
+        xaxis: { title: 'Strike' },
+        yaxis: { title: 'GEX ($)', zeroline: true, zerolinecolor: '#94a3b8' },
+        shapes,
+        annotations,
+        legend: { orientation: 'h', y: 1.12 },
+      }}
+      style={{ width: '100%' }}
+      useResizeHandler
+    />
+  )
+}
+
+export function GexTab() {
+  const [ticker, setTicker] = useState('SPY')
+  const [expFilter, setExpFilter] = useState<'all' | '0dte' | 'nearest' | 'custom'>('nearest')
+  const [customDate, setCustomDate] = useState('')
+  const [view0dte, setView0dte] = useState(false)
+  const [live, setLive] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [data, setData] = useState<GexResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const fetchGex = (viewOverride?: 'total' | '0dte') => {
+    setLoading(true)
+    setError(null)
+    const view =
+      viewOverride ?? (view0dte || expFilter === '0dte' ? '0dte' : 'total')
+    api
+      .gex(ticker, expFilter, live, {
+        customDate: expFilter === 'custom' ? customDate : undefined,
+        view,
+      })
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  const run = () => fetchGex()
+
+  const m = data?.metrics
+
+  useEffect(() => {
+    if (!helpOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHelpOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [helpOpen])
+
+  return (
+    <div>
+      <h3>Gamma Exposure (GEX)</h3>
+      <p className="muted">
+        Dealer-style gamma exposure from option-chain open interest and Black-Scholes gamma.
+        <strong> Positive gamma</strong> often dampens moves; <strong>negative gamma</strong>{' '}
+        can amplify them. Calls green / puts red.
+      </p>
+
+      <DataModeBanner live={live} />
+      <div className="form-row">
+        <label>
+          Ticker
+          <input
+            value={ticker}
+            onChange={(e) => setTicker(e.target.value.toUpperCase())}
+            placeholder="SPY"
+          />
+        </label>
+        <div className="quick-tickers">
+          {GEX_QUICK_TICKERS.map((sym) => (
+            <button key={sym} type="button" className="btn-sm" onClick={() => setTicker(sym)}>
+              {sym}
+            </button>
+          ))}
+        </div>
+        <label>
+          Expiration
+          <select
+            value={expFilter}
+            onChange={(e) => setExpFilter(e.target.value as typeof expFilter)}
+          >
+            <option value="nearest">Nearest</option>
+            <option value="0dte">0DTE</option>
+            <option value="all">All (≤16 exps)</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        {expFilter === 'custom' && (
+          <label>
+            Custom date
+            <input
+              value={customDate}
+              onChange={(e) => setCustomDate(e.target.value)}
+              placeholder="YYYY-MM-DD or MM/DD"
+            />
+          </label>
+        )}
+        <label className="checkbox">
+          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+          Fetch live data
+        </label>
+        {expFilter !== '0dte' && (
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={view0dte}
+              onChange={(e) => {
+                const checked = e.target.checked
+                setView0dte(checked)
+                if (data) fetchGex(checked ? '0dte' : 'total')
+              }}
+            />
+            0DTE only
+          </label>
+        )}
+        <button type="button" className="btn primary" onClick={run} disabled={loading}>
+          {loading ? 'Loading…' : 'Compute GEX'}
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {data && m && (
+        <>
+          <p className="muted">
+            {data.ticker} · {data.expiration_label} · spot {formatMoney(data.spot)} ·{' '}
+            {data.data_source === 'live' ? 'live' : 'cache'}
+          </p>
+
+          <GexPlainEnglishBlock data={data} />
+
+          <div className="gex-metrics-grid">
+            <div className="gex-metric-card">
+              <span className="gex-metric-label">Net GEX / 1%</span>
+              <span className={`gex-metric-value ${m.net_gex >= 0 ? 'gex-pos' : 'gex-neg'}`}>
+                {formatGex(m.net_gex)}
+              </span>
+            </div>
+            <div className="gex-metric-card">
+              <span className="gex-metric-label">Call GEX</span>
+              <span className="gex-metric-value gex-pos">{formatGex(m.call_gex)}</span>
+            </div>
+            <div className="gex-metric-card">
+              <span className="gex-metric-label">Put GEX</span>
+              <span className="gex-metric-value gex-neg">{formatGex(m.put_gex)}</span>
+            </div>
+            <div className="gex-metric-card">
+              <span className="gex-metric-label">Gamma flip</span>
+              <span className="gex-metric-value">
+                {data.gamma_flip != null ? formatMoney(data.gamma_flip) : '—'}
+              </span>
+            </div>
+            <div className="gex-metric-card">
+              <span className="gex-metric-label">Spot</span>
+              <span className="gex-metric-value">{formatMoney(data.spot)}</span>
+            </div>
+            <div className="gex-metric-card">
+              <span className="gex-metric-label">Regime</span>
+              <span className={`gex-metric-value ${gexRegimeClass(m.regime)}`}>{m.regime}</span>
+            </div>
+          </div>
+
+          <div className="gex-walls">
+            {data.call_wall && (
+              <p>
+                <span className="gex-highlight-call">Call wall</span> strike{' '}
+                <strong>{data.call_wall.strike}</strong> · GEX {formatGex(data.call_wall.gex)}
+              </p>
+            )}
+            {data.put_wall && (
+              <p>
+                <span className="gex-highlight-put">Put wall</span> strike{' '}
+                <strong>{data.put_wall.strike}</strong> · GEX {formatGex(data.put_wall.gex)}
+              </p>
+            )}
+            {data.gamma_flip != null && (
+              <p className="muted">
+                Flip line <strong>{formatMoney(data.gamma_flip)}</strong> — spot{' '}
+                {data.spot < data.gamma_flip ? 'below' : data.spot > data.gamma_flip ? 'above' : 'on'}{' '}
+                this level (choppier below, calmer above in positive gamma).
+              </p>
+            )}
+          </div>
+
+          <GexChart
+            rows={data.by_strike}
+            spot={data.spot}
+            gammaFlip={data.gamma_flip}
+            callWall={data.call_wall}
+            putWall={data.put_wall}
+          />
+
+          <p className="muted">{data.formula}</p>
+          <p className="muted gex-disclaimer">{data.disclaimer}</p>
+        </>
+      )}
+
+      <GexHelpNotes />
+      <div className="pivot-help-footer">
+        <button type="button" className="btn-sm pivot-help-btn" onClick={() => setHelpOpen(true)}>
+          Help — CALL, PUT, or WAIT for 0DTE?
+        </button>
+      </div>
+      <GexHelpPopup open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }
