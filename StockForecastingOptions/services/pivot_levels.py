@@ -8,7 +8,7 @@ import pandas as pd
 
 import cache as fcache
 from services.contract_service import ServiceError
-from services.data_access import get_underlying_history
+from services.data_access import data_source_label, get_underlying_history, should_live_refresh
 from services.messages import cache_miss_message
 from services.serialize import clean_dict
 from services.session_helpers import fetch_live_last_price, today_session_date
@@ -308,7 +308,7 @@ def get_pivot_levels(
         today = _session_row(today_dt, df.loc[today_dt])
         today["Is Current Session"] = True
         today["Row Source"] = "cache"
-        if live_fetch:
+        if should_live_refresh(live_fetch):
             live = fetch_live_last_price(symbol)
             today["Row Source"] = "live"
             if live is not None:
@@ -350,7 +350,7 @@ def get_pivot_levels(
             "next_resistance": next_resistance,
             "summary_lines": _today_summary(today, levels) if today else [],
             "live_fetch": live_fetch,
-            "data_source": "live" if live_fetch else "cache",
+            "data_source": data_source_label(live_fetch),
             "cache_meta": meta,
         }
     )

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 LIVE_FETCH_HINT = (
-    " No cached data on disk. Check **Fetch live data** and try again."
+    " No cached data on disk. Check **Fetch live data** to backfill history "
+    "(today refreshes during US market hours only)."
 )
 
 

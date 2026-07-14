@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import cache as fcache
+from services.data_access import data_source_label
 from backend.schemas import (
     CacheClearRequest,
     ContractRequest,
@@ -27,8 +28,10 @@ from backend.schemas import (
     GexRequest,
     WeekdaySessionsRequest,
     WhatIfRequest,
+    OptionsTrackerAddRequest,
 )
 from services import analytics as biz
+from services import options_tracker as opt_track
 from services.contract_service import (
     ServiceError,
     build_forecasts,
@@ -86,7 +89,8 @@ def _http_error(exc: ServiceError) -> HTTPException:
         "no_weekday_sessions": 404,
         "no_recent_sessions": 404,
         "invalid_history": 400,
-        "history_failed": 400,
+        "no_entry_price": 404,
+        "expirations_failed": 400,
     }.get(exc.code, 400)
     return HTTPException(
         status_code=status,
@@ -130,7 +134,7 @@ def watchlist_movers(live_fetch: bool = Query(False)) -> dict[str, Any]:
 
     return {
         "live_fetch": live_fetch,
-        "data_source": "live" if live_fetch else "cache",
+        "data_source": data_source_label(live_fetch),
         "cache_hint": _cache_hint(live_fetch, unavailable),
         "gainers": [_serialize_row(r) for r in gainers],
         "losers": [_serialize_row(r) for r in losers],
@@ -152,7 +156,7 @@ def watchlist_summary(live_fetch: bool = Query(False)) -> dict[str, Any]:
     ]
     return {
         "live_fetch": live_fetch,
-        "data_source": "live" if live_fetch else "cache",
+        "data_source": data_source_label(live_fetch),
         "cache_hint": _cache_hint(live_fetch, missing),
         "rows": df_to_records(display),
         "raw": df_to_records(df),
@@ -177,6 +181,35 @@ def tomorrow_watchlist_add(body: TomorrowWatchlistAddRequest) -> dict[str, Any]:
 def tomorrow_watchlist_remove(symbol: str) -> dict[str, Any]:
     try:
         return tw.remove_symbol(symbol)
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.get("/api/options-tracker")
+def options_tracker_list(live_fetch: bool = Query(False)) -> dict[str, Any]:
+    """Tracked call/put positions with entry vs current price."""
+    return opt_track.list_positions(live_fetch=live_fetch)
+
+
+@app.post("/api/options-tracker")
+def options_tracker_add(body: OptionsTrackerAddRequest) -> dict[str, Any]:
+    try:
+        return opt_track.add_position(
+            ticker=body.ticker,
+            option_type=body.option_type,
+            expiration_mmdd=body.expiration_mmdd,
+            strike=body.strike,
+            entry_price=body.entry_price,
+            live_fetch=body.live_fetch,
+        )
+    except ServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@app.delete("/api/options-tracker/{position_id}")
+def options_tracker_remove(position_id: str) -> dict[str, Any]:
+    try:
+        return opt_track.remove_position(position_id)
     except ServiceError as exc:
         raise _http_error(exc) from exc
 
@@ -264,7 +297,7 @@ def sma_check(body: SmaCheckRequest) -> dict[str, Any]:
     ]
     return {
         "live_fetch": body.live_fetch,
-        "data_source": "live" if body.live_fetch else "cache",
+        "data_source": data_source_label(body.live_fetch),
         "cache_hint": _cache_hint(body.live_fetch, missing),
         "rows": df_to_records(display),
         "vertical": df_to_records(vertical),

@@ -42,11 +42,11 @@ export function Sidebar({
         ))}
       </fieldset>
       <label>
-        Expiration (MM/DD)
+        Expiration (MM/DD or MM/DD/YYYY)
         <input
           value={form.expirationMmdd}
           onChange={(e) => onChange({ ...form, expirationMmdd: e.target.value })}
-          placeholder="06/20"
+          placeholder="06/20 or 06/20/2028"
         />
       </label>
       <label>
@@ -75,11 +75,12 @@ export function Sidebar({
       </label>
       <p className="hint">
         <strong>Unchecked (default):</strong> read from disk cache only — no Yahoo Finance
-        calls. If nothing is cached yet, you will see &quot;No cached data — enable Fetch live
-        data&quot;.
+        calls. If nothing is cached yet, enable Fetch live data once to backfill history.
       </p>
       <p className="hint">
-        <strong>Checked:</strong> download or refresh from Yahoo Finance, then save to cache.
+        <strong>Checked:</strong> cache-first — prior days from disk (backfill if missing);
+        today&apos;s prices and option chains refresh during US market hours only (9:30 AM–4:00
+        PM ET).
       </p>
 
       {cacheSummary && (

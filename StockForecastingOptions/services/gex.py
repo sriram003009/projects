@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -10,9 +11,16 @@ import pandas as pd
 
 import forecasting as fc
 from services.contract_service import ServiceError
-from services.data_access import get_expirations, get_option_chain, get_underlying_history
+from services.data_access import (
+    data_source_label,
+    get_expirations,
+    get_option_chain,
+    get_underlying_history,
+    should_live_refresh,
+)
 from services.messages import cache_miss_message
 from services.serialize import clean_dict
+from services.session_helpers import fetch_live_last_price
 
 ExpirationFilter = Literal["all", "0dte", "nearest", "custom"]
 GexRegime = Literal["Positive Gamma", "Neutral Gamma", "Negative Gamma"]
@@ -213,13 +221,12 @@ def _select_expirations(
         raw = custom_date.strip()
         if raw in available:
             return [raw], odte
-        # try MM/DD → resolve year
-        if "/" in raw:
-            mm, dd = (int(x) for x in raw.split("/"))
+        if "/" in raw or re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
             from services import analytics as biz
 
             try:
-                resolved = biz.resolve_expiration(mm, dd, available)
+                mm, dd, year = biz.parse_expiration_input(raw)
+                resolved = biz.resolve_expiration(mm, dd, available, year=year)
             except ValueError as exc:
                 raise ServiceError(
                     "expiration_not_found",
@@ -234,6 +241,23 @@ def _select_expirations(
     # all — cap count for performance
     exps = [d.strftime("%Y-%m-%d") for d in pool[:MAX_EXPIRATIONS_ALL]]
     return exps, odte
+
+
+def _resolve_spot(
+    symbol: str,
+    hist: pd.DataFrame,
+    *,
+    live_fetch: bool,
+) -> tuple[float, str]:
+    """Last close from cache/history; overlay Yahoo live price in market hours."""
+    spot = float(hist["Close"].iloc[-1])
+    source = "cache"
+    if should_live_refresh(live_fetch):
+        live = fetch_live_last_price(symbol)
+        if live is not None and not pd.isna(live):
+            spot = float(live)
+            source = "live"
+    return round(spot, 2), source
 
 
 def get_gex_levels(
@@ -276,7 +300,7 @@ def get_gex_levels(
             if not live_fetch
             else f"Could not load spot for `{symbol}`.",
         )
-    spot = float(hist["Close"].iloc[-1])
+    spot, spot_source = _resolve_spot(symbol, hist, live_fetch=live_fetch)
 
     # Load chains and aggregate
     all_call: dict[float, float] = {}
@@ -345,7 +369,8 @@ def get_gex_levels(
     return clean_dict(
         {
             "ticker": symbol,
-            "spot": round(spot, 2),
+            "spot": spot,
+            "spot_source": spot_source,
             "expiration_filter": expiration_filter,
             "expiration_label": exp_label,
             "expirations_used": loaded,
@@ -369,6 +394,6 @@ def get_gex_levels(
                 "not financial advice."
             ),
             "live_fetch": live_fetch,
-            "data_source": "live" if live_fetch else "cache",
+            "data_source": data_source_label(live_fetch),
         }
     )

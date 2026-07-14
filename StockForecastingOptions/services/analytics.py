@@ -10,18 +10,18 @@ import pandas as pd
 
 import cache as fcache
 import forecasting as fc
-from services.data_access import get_option_chain
+from services.data_access import data_source_label, get_option_chain
 
 def format_cache_badge(symbol: str, live_fetch: bool) -> str | None:
     """Human-friendly 'Data updated: …' string, or None if no cache exists."""
     meta = fcache.cache_metadata(symbol)
     if meta is None:
         return None
-    mode = "live" if live_fetch else "cache only"
+    mode = data_source_label(live_fetch)
     return (
         f"Data updated: {meta['cache_updated_at']:%Y-%m-%d %H:%M}  ·  "
         f"Last bar: {meta['last_bar_date']:%Y-%m-%d}  ·  "
-        f"Mode: **{mode}**"
+        f"Mode: {mode}"
     )
 
 
@@ -717,13 +717,73 @@ def fetch_put_call_analysis(
     return analyze_put_call_balance(calls, puts)
 
 
-def resolve_expiration(mm: int, dd: int, available: List[str]) -> str:
-    """Map MM/DD to the soonest matching real expiration date.
+EXPIRATION_FORMAT_MSG = (
+    "Expiration must be MM/DD (e.g. 06/26), MM/DD/YYYY (e.g. 06/26/2028), "
+    "or YYYY-MM-DD."
+)
 
-    Searches the available expirations for one whose month/day match the input.
-    If multiple match across years, returns the earliest one that is today or
-    later. Raises ValueError if nothing matches.
+
+def parse_expiration_input(raw: str) -> tuple[int, int, int | None]:
+    """Parse expiration input → (month, day, year_or_none).
+
+    Supports MM/DD (year auto-resolved), MM/DD/YYYY, MM/DD/YY, and YYYY-MM-DD.
     """
+    s = raw.strip()
+    if not s:
+        raise ValueError("empty")
+
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        d = datetime.strptime(s, "%Y-%m-%d").date()
+        return d.month, d.day, d.year
+
+    parts = s.split("/")
+    if len(parts) not in (2, 3):
+        raise ValueError("bad format")
+
+    try:
+        mm, dd = int(parts[0]), int(parts[1])
+    except ValueError as exc:
+        raise ValueError("bad format") from exc
+
+    year: int | None = None
+    if len(parts) == 3:
+        y = int(parts[2])
+        year = y if y >= 100 else 2000 + y
+
+    if not (1 <= mm <= 12 and 1 <= dd <= 31):
+        raise ValueError("invalid date")
+
+    if year is not None:
+        try:
+            date(year, mm, dd)
+        except ValueError as exc:
+            raise ValueError("invalid date") from exc
+
+    return mm, dd, year
+
+
+def resolve_expiration(
+    mm: int,
+    dd: int,
+    available: List[str],
+    *,
+    year: int | None = None,
+) -> str:
+    """Map expiration input to a listed YYYY-MM-DD date.
+
+    With ``year`` set, requires an exact match (e.g. 06/26/2028).
+    With ``year`` None, picks the soonest listed MM/DD on or after today.
+    """
+    if year is not None:
+        try:
+            target = date(year, mm, dd)
+        except ValueError:
+            raise ValueError("no_match") from None
+        target_str = target.strftime("%Y-%m-%d")
+        if target_str in available:
+            return target_str
+        raise ValueError("no_match")
+
     today = date.today()
     matches: List[date] = []
     for s in available:

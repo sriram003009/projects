@@ -103,6 +103,11 @@ body {
   grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
+/* 15 tabs → 8 + 7 grid */
+.tab-grid:has(.tab-btn:nth-child(15):last-child) {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
 .tab-btn {
   border: 2px solid transparent;
   border-radius: 10px;
@@ -138,6 +143,7 @@ body {
 .tab-violet { background: linear-gradient(135deg, #ede7f6, #b39ddb); color: #4a148c; }
 .tab-gold { background: linear-gradient(135deg, #fff8e1, #ffd54f); color: #f57f17; }
 .tab-emerald { background: linear-gradient(135deg, #e8f5e9, #66bb6a); color: #1b5e20; }
+.tab-sky { background: linear-gradient(135deg, #e1f5fe, #81d4fa); color: #01579b; }
 
 .tab-btn.active.tab-blue { background: linear-gradient(135deg, #1976d2, #0d47a1); color: #fff; }
 .tab-btn.active.tab-orange { background: linear-gradient(135deg, #f57c00, #e65100); color: #fff; }
@@ -153,6 +159,7 @@ body {
 .tab-btn.active.tab-violet { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; }
 .tab-btn.active.tab-gold { background: linear-gradient(135deg, #ff8f00, #e65100); color: #fff; }
 .tab-btn.active.tab-emerald { background: linear-gradient(135deg, #2e7d32, #1b5e20); color: #fff; }
+.tab-btn.active.tab-sky { background: linear-gradient(135deg, #0288d1, #01579b); color: #fff; }
 
 .signal-pill {
   display: inline-block;
@@ -175,6 +182,61 @@ body {
 .watchlist-table td,
 .watchlist-table th {
   vertical-align: middle;
+}
+
+.tracker-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tracker-table th,
+.tracker-table td {
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+  vertical-align: middle;
+}
+
+.tracker-row-up {
+  background: rgba(46, 125, 50, 0.18);
+}
+
+.tracker-row-down {
+  background: rgba(211, 47, 47, 0.14);
+}
+
+.tracker-row-flat {
+  background: rgba(158, 158, 158, 0.1);
+}
+
+.tracker-row-unknown {
+  background: rgba(255, 193, 7, 0.08);
+}
+
+.tracker-dir-up {
+  font-weight: 700;
+  color: #2e7d32;
+}
+
+.tracker-dir-down {
+  font-weight: 700;
+  color: #c62828;
+}
+
+.tracker-dir-flat {
+  font-weight: 600;
+  color: #616161;
+}
+
+.tracker-add-form {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tracker-add-form input,
+.tracker-add-form select {
+  min-width: 5.5rem;
 }
 
 .weekday-label {
@@ -944,6 +1006,14 @@ th {
 .gex-disclaimer {
   font-size: 0.85rem;
   font-style: italic;
+}
+
+.gex-spot-live {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #1565c0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .gex-hero-range {

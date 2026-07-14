@@ -8,6 +8,8 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+import cache as fcache
+
 
 def today_session_date() -> str:
     return pd.Timestamp(dt.date.today()).strftime("%Y-%m-%d")
@@ -39,12 +41,13 @@ def enrich_current_session_rows(
     ticker: str,
     live_fetch: bool,
 ) -> list[dict[str, Any]]:
-    """Tag today's row and, on live fetch, refresh Close/High/Low to last price."""
+    """Tag today's row; refresh Close/High/Low live only during market hours."""
     if not rows:
         return rows
 
     today = today_session_date()
-    live_price = fetch_live_last_price(ticker) if live_fetch else None
+    live_now = fcache.should_live_refresh(live_fetch)
+    live_price = fetch_live_last_price(ticker) if live_now else None
     enriched: list[dict[str, Any]] = []
 
     for row in rows:
@@ -52,10 +55,14 @@ def enrich_current_session_rows(
         is_today = out.get("Date") == today
         out["Is Current Session"] = is_today
         out["Row Source"] = (
-            "live" if is_today and live_fetch else "cache" if is_today else "historical"
+            "live"
+            if is_today and live_now and live_price is not None
+            else "cache"
+            if is_today
+            else "historical"
         )
 
-        if is_today and live_fetch and live_price is not None:
+        if is_today and live_now and live_price is not None:
             out["Close"] = live_price
             if "High" in out and live_price > out["High"]:
                 out["High"] = live_price

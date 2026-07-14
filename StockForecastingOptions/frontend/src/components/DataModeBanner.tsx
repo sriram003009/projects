@@ -3,21 +3,29 @@ interface Props {
   label?: string
 }
 
-/** Shows whether the UI is in cache-only or live-fetch mode. */
+/** Shows whether the UI is in cache-only or cache-first + live mode. */
 export function DataModeBanner({ live, label = 'Data mode' }: Props) {
   return (
     <p className={`data-mode ${live ? 'live' : 'cache'}`}>
       {label}:{' '}
       {live ? (
-        <strong>Live fetch</strong>
+        <>
+          <strong>Cache-first + live today</strong>
+          <span className="data-mode-note">
+            {' '}
+            — prior sessions from disk; missing history is backfilled; today&apos;s bar /
+            option chains refresh during US market hours (9:30 AM–4:00 PM ET) only.
+          </span>
+        </>
       ) : (
-        <strong>Cache only</strong>
-      )}
-      {!live && (
-        <span className="data-mode-note">
-          {' '}
-          — uses disk cache only; no network unless you check Fetch live data.
-        </span>
+        <>
+          <strong>Cache only</strong>
+          <span className="data-mode-note">
+            {' '}
+            — disk cache only; no Yahoo calls. Enable Fetch live data to backfill gaps and
+            refresh today during market hours.
+          </span>
+        </>
       )}
     </p>
   )
@@ -54,6 +62,16 @@ export function formatCentralDateTime(iso: string): string {
   }).format(date)
 
   return `${datePart} at ${timePart} Central`
+}
+
+export function formatDataSource(source?: string | null): string {
+  if (source === 'cache+live') return 'cache + live'
+  if (source === 'live') return 'live'
+  return 'cache'
+}
+
+export function isLiveCapableSource(source?: string | null): boolean {
+  return source === 'live' || source === 'cache+live'
 }
 
 interface CacheUpdatedProps {

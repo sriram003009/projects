@@ -9,7 +9,7 @@ import pandas as pd
 
 import cache as fcache
 from services.contract_service import ServiceError
-from services.data_access import get_underlying_history
+from services.data_access import data_source_label, get_underlying_history
 from services.messages import cache_miss_message
 from services.serialize import clean_dict
 
@@ -35,6 +35,8 @@ DEFAULT_THRESHOLDS: dict[str, float | int] = {
     "rsi_period": 14,
     "confidence_high_min": 85,
     "confidence_medium_min": 55,
+    "spy_session_down_pct": 0.5,
+    "spy_session_up_pct": 0.5,
 }
 
 DISCLAIMER = (
@@ -221,6 +223,37 @@ def _classify_trend(
     return "Neutral"
 
 
+def _apply_session_trend_filter(
+    structure_trend: Trend,
+    spy_chg_1d_pct: float | None,
+    cfg: dict[str, float | int],
+) -> tuple[Trend, str | None]:
+    """Downgrade structure trend when today's SPY session contradicts it."""
+    if spy_chg_1d_pct is None or structure_trend == "Neutral":
+        return structure_trend, None
+
+    down_thresh = float(cfg["spy_session_down_pct"])
+    up_thresh = float(cfg["spy_session_up_pct"])
+
+    if structure_trend == "Bullish" and spy_chg_1d_pct <= -down_thresh:
+        return (
+            "Neutral",
+            (
+                f"Multi-day SPY structure is Bullish (VWAP/EMA/RSI), but today's session is "
+                f"down {abs(spy_chg_1d_pct):.2f}% — cannot issue BUY CALL against a red day."
+            ),
+        )
+    if structure_trend == "Bearish" and spy_chg_1d_pct >= up_thresh:
+        return (
+            "Neutral",
+            (
+                f"Multi-day SPY structure is Bearish (VWAP/EMA/RSI), but today's session is "
+                f"up {spy_chg_1d_pct:.2f}% — cannot issue BUY PUT against a green day."
+            ),
+        )
+    return structure_trend, None
+
+
 def _combine_signal(regime: Regime, stress: Stress, trend: Trend) -> tuple[Signal, str]:
     if trend == "Neutral":
         return "NO TRADE", "Trend neutral — price/VWAP/EMA/RSI not aligned."
@@ -274,8 +307,8 @@ def _no_trade_context(regime: Regime, stress: Stress, trend: Trend) -> str | Non
         )
     if trend == "Neutral":
         return (
-            "SPY trend is Neutral — price/VWAP/EMA/RSI are not fully aligned. The engine "
-            "requires a clear Bullish or Bearish trend before issuing CALL or PUT."
+            "SPY trend is Neutral — price/VWAP/EMA/RSI not aligned, or today's session "
+            "contradicts the multi-day structure."
         )
     if trend == "Bullish":
         return (
@@ -488,13 +521,20 @@ def get_vix_spy_signal(
     vix_level, vix_level_note = _vix_price_level(vix_close)
 
     spy_close = float(spy_df["Close"].iloc[-1])
+    spy_prev = float(spy_df["Close"].iloc[-2]) if len(spy_df) >= 2 else spy_close
+    spy_chg_1d_pct = (
+        ((spy_close - spy_prev) / spy_prev * 100.0) if spy_prev else None
+    )
     ema_fast_s = spy_df["Close"].ewm(span=int(cfg["ema_fast"]), adjust=False).mean()
     ema_slow_s = spy_df["Close"].ewm(span=int(cfg["ema_slow"]), adjust=False).mean()
     ema_fast = float(ema_fast_s.iloc[-1])
     ema_slow = float(ema_slow_s.iloc[-1])
     vwap = _rolling_vwap(spy_df, int(cfg["vwap_lookback"]))
     rsi = _rsi(spy_df["Close"], int(cfg["rsi_period"]))
-    trend = _classify_trend(spy_close, vwap, ema_fast, ema_slow, rsi, cfg)
+    structure_trend = _classify_trend(spy_close, vwap, ema_fast, ema_slow, rsi, cfg)
+    trend, session_note = _apply_session_trend_filter(
+        structure_trend, spy_chg_1d_pct, cfg
+    )
     vix_spy_implication = _vix_spy_implication(
         vix=vix_close,
         vix_level=vix_level,
@@ -512,6 +552,10 @@ def get_vix_spy_signal(
 
     reasons = [rule_note]
     context_note = _no_trade_context(regime, stress, trend) if signal == "NO TRADE" else None
+    if session_note:
+        reasons.insert(0, session_note)
+        if signal == "NO TRADE" and not context_note:
+            context_note = session_note
     if context_note:
         reasons.append(context_note)
     for layer in layers:
@@ -538,6 +582,8 @@ def get_vix_spy_signal(
             "regime": regime,
             "stress": stress,
             "trend": trend,
+            "structure_trend": structure_trend,
+            "session_note": session_note,
             "rule_matched": rule_note,
             "context_note": context_note,
             "reasons": reasons,
@@ -570,6 +616,9 @@ def get_vix_spy_signal(
             "spy_technicals": {
                 "symbol": SPY_SYMBOL,
                 "close": round(spy_close, 2),
+                "change_1d_pct": round(spy_chg_1d_pct, 2)
+                if spy_chg_1d_pct is not None
+                else None,
                 "vwap": round(vwap, 2) if vwap is not None else None,
                 "ema9": round(ema_fast, 2),
                 "ema20": round(ema_slow, 2),
@@ -581,7 +630,7 @@ def get_vix_spy_signal(
             "suggested_strike": suggested_strike,
             "thresholds": cfg,
             "live_fetch": live_fetch,
-            "data_source": "live" if live_fetch else "cache",
+            "data_source": data_source_label(live_fetch),
             "cache_meta": {
                 "spy": meta_spy,
                 "vix": meta_vix,

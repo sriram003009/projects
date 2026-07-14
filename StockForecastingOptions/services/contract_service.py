@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import date, datetime
 from typing import Any
 
@@ -13,6 +12,7 @@ import cache as fcache
 import forecasting as fc
 from services import analytics as biz
 from services.data_access import (
+    data_source_label,
     get_contract_history,
     get_expirations,
     get_option_chain,
@@ -21,7 +21,43 @@ from services.data_access import (
 from services.messages import cache_miss_message
 from services.serialize import clean_dict, df_to_records
 
-MMDD_RE = re.compile(r"^\d{2}/\d{2}$")
+SESSIONS_REQUESTED = 30
+
+
+def _sessions_note(n: int, live_fetch: bool) -> str | None:
+    if n >= SESSIONS_REQUESTED:
+        return None
+    if n <= 1:
+        return (
+            f"Yahoo Finance returned only {n} daily bar for this contract. "
+            "It may be newly listed or illiquid — try a later expiration, a strike "
+            "closer to the stock price, and enable Fetch live data."
+        )
+    hint = (
+        "Enable Fetch live data to refresh the cache."
+        if not live_fetch
+        else "A longer-dated expiration usually has more history."
+    )
+    return (
+        f"Showing {n} of {SESSIONS_REQUESTED} requested sessions — Yahoo has limited "
+        f"history for this specific option contract. {hint}"
+    )
+
+
+def _build_session_display(
+    hist: pd.DataFrame,
+    underlying: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Option OHLCV table with aligned underlying close."""
+    stock_close = pd.Series(index=hist.index, dtype=float)
+    if underlying is not None and not underlying.empty:
+        under_daily = fcache.normalize_daily_ohlcv(underlying)
+        stock_close = under_daily["Close"].reindex(hist.index, method="ffill")
+
+    display = hist[["Open", "High", "Low", "Close", "Volume"]].copy()
+    display.insert(0, "Date", display.index.strftime("%Y-%m-%d"))
+    display["Stock Close"] = stock_close.values
+    return display[["Date", "Open", "High", "Low", "Close", "Stock Close", "Volume"]]
 
 
 class ServiceError(Exception):
@@ -37,21 +73,20 @@ def _validate_contract_request(
     option_type: str,
     expiration_mmdd: str,
     strike: float,
-) -> tuple[str, str, int, int, float]:
+) -> tuple[str, str, int, int, int | None, float]:
     ticker = ticker.strip().upper()
     if not ticker:
         raise ServiceError("missing_ticker", "Please enter a stock ticker.")
     if option_type not in ("Call", "Put"):
         raise ServiceError("invalid_option_type", "Option type must be Call or Put.")
     exp = expiration_mmdd.strip()
-    if not MMDD_RE.match(exp):
-        raise ServiceError("invalid_expiration", "Expiration must be in MM/DD format (e.g. 06/26).")
-    mm, dd = (int(x) for x in exp.split("/"))
-    if not (1 <= mm <= 12 and 1 <= dd <= 31):
-        raise ServiceError("invalid_expiration", "Expiration MM/DD has an invalid month or day.")
+    try:
+        mm, dd, year = biz.parse_expiration_input(exp)
+    except ValueError:
+        raise ServiceError("invalid_expiration", biz.EXPIRATION_FORMAT_MSG)
     if strike <= 0:
         raise ServiceError("invalid_strike", "Strike price must be greater than zero.")
-    return ticker, option_type, mm, dd, float(strike)
+    return ticker, option_type, mm, dd, year, float(strike)
 
 
 def lookup_contract(
@@ -62,7 +97,7 @@ def lookup_contract(
     live_fetch: bool = False,
 ) -> dict[str, Any]:
     """Resolve contract and return header + last-30 session history."""
-    ticker, option_type, mm, dd, strike = _validate_contract_request(
+    ticker, option_type, mm, dd, year, strike = _validate_contract_request(
         ticker, option_type, expiration_mmdd, strike
     )
 
@@ -81,7 +116,7 @@ def lookup_contract(
         raise ServiceError(code, msg)
 
     try:
-        expiration_date = biz.resolve_expiration(mm, dd, expirations)
+        expiration_date = biz.resolve_expiration(mm, dd, expirations, year=year)
     except ValueError:
         raise ServiceError(
             "expiration_not_found",
@@ -138,26 +173,16 @@ def lookup_contract(
         )
         raise ServiceError(code, msg)
 
-    hist = hist.tail(30).copy()
-    if hist.index.tz is not None:
-        hist.index = hist.index.tz_localize(None)
-
     underlying = None
     try:
         underlying = get_underlying_history(ticker, period="1y", live_fetch=live_fetch)
     except Exception:
         underlying = None
 
-    stock_close = pd.Series(index=hist.index, dtype=float)
-    if underlying is not None and not underlying.empty:
-        stock_close = underlying["Close"].reindex(hist.index, method="ffill")
-
-    display = hist[["Open", "High", "Low", "Close", "Volume"]].copy()
-    display.insert(0, "Date", display.index.strftime("%Y-%m-%d"))
-    display["Stock Close"] = stock_close.values
-    display = display[
-        ["Date", "Open", "High", "Low", "Close", "Stock Close", "Volume"]
-    ]
+    daily_hist = fcache.normalize_daily_ohlcv(hist)
+    sessions_hist = daily_hist.tail(SESSIONS_REQUESTED)
+    display = _build_session_display(sessions_hist, underlying)
+    sessions_returned = len(display)
 
     trend = (
         biz.weekly_trend_note(ticker, underlying)
@@ -192,13 +217,18 @@ def lookup_contract(
             "implied_vol": implied_vol,
             "open_interest": open_interest,
             "live_fetch": live_fetch,
-            "data_source": "live" if live_fetch else "cache",
+            "data_source": data_source_label(live_fetch),
             "cache_badge": biz.format_cache_badge(contract_symbol, live_fetch),
             "underlying_meta": underlying_meta,
             "contract_meta": contract_meta,
             "weekly_trend": trend,
+            "sessions_requested": SESSIONS_REQUESTED,
+            "sessions_returned": sessions_returned,
+            "sessions_note": _sessions_note(sessions_returned, live_fetch),
             "sessions": df_to_records(display),
-            "history_raw": df_to_records(hist.reset_index().rename(columns={"index": "Date"})),
+            "history_raw": df_to_records(
+                daily_hist.reset_index().rename(columns={"index": "Date"})
+            ),
             "context": {
                 "spot": spot,
                 "sigma": sigma,
@@ -265,7 +295,8 @@ def build_forecasts(
         fc.black_scholes_price(spot, strike, T0, fc.RISK_FREE_RATE, sigma, opt_type)
     )
 
-    hist = get_contract_history(base["contract_symbol"], live_fetch=live_fetch).tail(30)
+    hist = get_contract_history(base["contract_symbol"], live_fetch=live_fetch)
+    hist = fcache.normalize_daily_ohlcv(hist).tail(SESSIONS_REQUESTED)
     last_idx = hist.index[-1] if not hist.empty else today
     future_dates = pd.bdate_range(start=last_idx + pd.Timedelta(days=1), periods=forecast_days)
     date_strs = [d.strftime("%Y-%m-%d") for d in future_dates]
@@ -404,16 +435,26 @@ def build_whatif(
     exp_ts = pd.Timestamp(base["expiration_date"])
     today = pd.Timestamp(date.today())
 
-    if not MMDD_RE.match(target_mmdd.strip()):
-        raise ServiceError("invalid_target_date", "Target date must be in MM/DD format.")
-
-    t_mm, t_dd = (int(x) for x in target_mmdd.strip().split("/"))
     try:
-        target_date = date(today.year, t_mm, t_dd)
-        if target_date < today.date():
-            target_date = date(today.year + 1, t_mm, t_dd)
-    except ValueError as exc:
-        raise ServiceError("invalid_target_date", f"Invalid target date: {target_mmdd}") from exc
+        t_mm, t_dd, t_year = biz.parse_expiration_input(target_mmdd)
+    except ValueError:
+        raise ServiceError(
+            "invalid_target_date",
+            "Target date must be MM/DD or MM/DD/YYYY (e.g. 06/08 or 06/08/2028).",
+        )
+
+    if t_year is not None:
+        try:
+            target_date = date(t_year, t_mm, t_dd)
+        except ValueError as exc:
+            raise ServiceError("invalid_target_date", f"Invalid target date: {target_mmdd}") from exc
+    else:
+        try:
+            target_date = date(today.year, t_mm, t_dd)
+            if target_date < today.date():
+                target_date = date(today.year + 1, t_mm, t_dd)
+        except ValueError as exc:
+            raise ServiceError("invalid_target_date", f"Invalid target date: {target_mmdd}") from exc
 
     target_ts = pd.Timestamp(target_date)
     capped = False
@@ -538,8 +579,10 @@ def get_put_call_analysis(
     ticker = ticker.strip().upper()
     if not ticker:
         raise ServiceError("missing_ticker", "Enter a ticker symbol.")
-    if not MMDD_RE.match(expiration_mmdd.strip()):
-        raise ServiceError("invalid_expiration", "Expiration must be in MM/DD format.")
+    try:
+        mm, dd, year = biz.parse_expiration_input(expiration_mmdd.strip())
+    except ValueError:
+        raise ServiceError("invalid_expiration", biz.EXPIRATION_FORMAT_MSG)
 
     try:
         exps = get_expirations(ticker, live_fetch=live_fetch)
@@ -555,9 +598,8 @@ def get_put_call_analysis(
         )
         raise ServiceError(code, msg)
 
-    mm, dd = (int(x) for x in expiration_mmdd.strip().split("/"))
     try:
-        exp_date = biz.resolve_expiration(mm, dd, exps)
+        exp_date = biz.resolve_expiration(mm, dd, exps, year=year)
     except ValueError:
         raise ServiceError(
             "expiration_not_found",
@@ -597,7 +639,7 @@ def get_put_call_analysis(
             "ticker": ticker,
             "expiration_date": exp_date,
             "live_fetch": live_fetch,
-            "data_source": "live" if live_fetch else "cache",
+            "data_source": data_source_label(live_fetch),
             "stats": stats,
             "top_call_strikes": _top_strikes(calls),
             "top_put_strikes": _top_strikes(puts),
@@ -614,19 +656,12 @@ def get_cached_contract_detail(contract_symbol: str) -> dict[str, Any]:
     if hist is None or hist.empty:
         raise ServiceError("no_cache", f"No cached history for `{contract_symbol}`.")
 
-    hist = hist.tail(30).copy()
-    if hist.index.tz is not None:
-        hist.index = hist.index.tz_localize(None)
+    daily_hist = fcache.normalize_daily_ohlcv(hist)
+    sessions_hist = daily_hist.tail(SESSIONS_REQUESTED)
 
     ticker = parsed["ticker"]
     underlying = fcache.disk_cached_history(ticker, live_fetch=False)
-    stock_close = pd.Series(index=hist.index, dtype=float)
-    if underlying is not None and not underlying.empty:
-        stock_close = underlying["Close"].reindex(hist.index, method="ffill")
-
-    display = hist[["Open", "High", "Low", "Close", "Volume"]].copy()
-    display.insert(0, "Date", display.index.strftime("%Y-%m-%d"))
-    display["Stock Close"] = stock_close.values
+    display = _build_session_display(sessions_hist, underlying)
 
     trend = (
         biz.weekly_trend_note(ticker, underlying)
@@ -639,8 +674,9 @@ def get_cached_contract_detail(contract_symbol: str) -> dict[str, Any]:
             **parsed,
             "meta": fcache.cache_metadata(contract_symbol),
             "weekly_trend": trend,
-            "sessions": df_to_records(
-                display[["Date", "Open", "High", "Low", "Close", "Stock Close", "Volume"]]
-            ),
+            "sessions_requested": SESSIONS_REQUESTED,
+            "sessions_returned": len(display),
+            "sessions_note": _sessions_note(len(display), live_fetch=False),
+            "sessions": df_to_records(display),
         }
     )

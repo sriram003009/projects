@@ -1,6 +1,6 @@
 """Options Lookup — Streamlit app.
 
-Takes a stock ticker, option type (Call/Put), expiration date in MM/DD format,
+Takes a stock ticker, option type (Call/Put), expiration date (MM/DD, MM/DD/YYYY, or YYYY-MM-DD),
 and a strike price, then displays the last 30 trading sessions for that
 specific option contract as both a table and an interactive Plotly chart.
 
@@ -27,6 +27,7 @@ from plotly.subplots import make_subplots
 
 import forecasting as fc
 import cache as fcache
+from services import analytics as biz
 
 st.set_page_config(
     page_title="Options Lookup",
@@ -212,9 +213,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-MMDD_RE = re.compile(r"^\d{2}/\d{2}$")
-
-
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -262,7 +260,7 @@ def get_contract_history(
     read, no yfinance calls.
     """
     return fcache.disk_cached_history(
-        contract_symbol, min_period="3mo", live_fetch=live_fetch
+        contract_symbol, min_period="6mo", live_fetch=live_fetch
     )
 
 
@@ -283,7 +281,7 @@ def format_cache_badge(symbol: str, live_fetch: bool) -> str | None:
     meta = fcache.cache_metadata(symbol)
     if meta is None:
         return None
-    mode = "live" if live_fetch else "cache only"
+    mode = fcache.data_source_label(live_fetch)
     return (
         f"Data updated: {meta['cache_updated_at']:%Y-%m-%d %H:%M}  ·  "
         f"Last bar: {meta['last_bar_date']:%Y-%m-%d}  ·  "
@@ -970,26 +968,11 @@ def fetch_put_call_analysis(
     return analyze_put_call_balance(calls, puts)
 
 
-def resolve_expiration(mm: int, dd: int, available: List[str]) -> str:
-    """Map MM/DD to the soonest matching real expiration date.
-
-    Searches the available expirations for one whose month/day match the input.
-    If multiple match across years, returns the earliest one that is today or
-    later. Raises ValueError if nothing matches.
-    """
-    today = date.today()
-    matches: List[date] = []
-    for s in available:
-        d = datetime.strptime(s, "%Y-%m-%d").date()
-        if d.month == mm and d.day == dd:
-            matches.append(d)
-
-    if not matches:
-        raise ValueError("no_match")
-
-    future = [d for d in matches if d >= today]
-    chosen = min(future) if future else max(matches)
-    return chosen.strftime("%Y-%m-%d")
+def resolve_expiration(
+    mm: int, dd: int, available: List[str], *, year: int | None = None
+) -> str:
+    """Delegate to shared business logic (supports optional year)."""
+    return biz.resolve_expiration(mm, dd, available, year=year)
 
 
 def nearest_expirations(available: List[str], n: int = 5) -> List[str]:
@@ -1020,9 +1003,9 @@ with st.sidebar.form("contract_form"):
     ticker_input = st.text_input("Stock Ticker", value="AAPL", help="e.g. AAPL, TSLA, SPY")
     option_type = st.radio("Option Type", ["Call", "Put"], horizontal=True)
     expiration_input = st.text_input(
-        "Expiration (MM/DD)",
+        "Expiration (MM/DD or MM/DD/YYYY)",
         value="",
-        help="e.g. 06/26 — year is auto-resolved to the next listed expiration",
+        help="e.g. 06/26 (nearest year) or 06/26/2028 for a specific LEAPS expiration",
     )
     strike_input = st.number_input(
         "Strike Price",
@@ -1044,15 +1027,16 @@ live_fetch = st.sidebar.checkbox(
     key="live_fetch",
     help=(
         "When **unchecked** (default), the app uses ONLY locally-cached data — "
-        "no calls to Yahoo Finance. Safest for staying under rate limits.\n\n"
-        "When **checked**, the app refreshes the cache: fetches just the daily "
-        "delta for OHLCV history, and re-pulls expirations + option chain."
+        "no calls to Yahoo Finance.\n\n"
+        "When **checked**, cache-first: prior days from disk (backfill if missing); "
+        "today's bar and option chains refresh during US market hours only "
+        "(Mon–Fri 9:30 AM–4:00 PM ET)."
     ),
 )
 if live_fetch:
     st.sidebar.caption(
-        ":green[**Live mode**] — Yahoo Finance will be called and the disk "
-        "cache will be updated."
+        ":green[**Cache-first + live today**] — backfills missing history; "
+        "intraday refresh during market hours only."
     )
 else:
     st.sidebar.caption(
@@ -1640,10 +1624,10 @@ with tab_pcr:
             help="e.g. SPY, QQQ, AAPL",
         )
         pcr_exp_input = st.text_input(
-            "Expiration (MM/DD)",
+            "Expiration (MM/DD or MM/DD/YYYY)",
             value=st.session_state.get("pcr_exp_input", ""),
-            placeholder="e.g. 06/20",
-            help="Option expiration date in month/day format.",
+            placeholder="e.g. 06/20 or 06/20/2028",
+            help="Option expiration — MM/DD auto-picks year, or use MM/DD/YYYY for LEAPS.",
         )
         pcr_live = st.checkbox(
             "Fetch live data",
@@ -1656,14 +1640,19 @@ with tab_pcr:
         pcr_t = pcr_ticker.strip().upper()
         if not pcr_t:
             st.error("Enter a ticker symbol.")
-        elif not MMDD_RE.match(pcr_exp_input.strip()):
-            st.error("Expiration must be in MM/DD format (e.g. `06/20`).")
+        elif not pcr_exp_input.strip():
+            st.error("Enter an expiration date.")
         else:
-            st.session_state["pcr_ticker"] = pcr_t
-            st.session_state["pcr_exp_input"] = pcr_exp_input.strip()
-            st.session_state["pcr_live"] = pcr_live
-            st.session_state["pcr_ready"] = True
-            fetch_put_call_analysis.clear()
+            try:
+                biz.parse_expiration_input(pcr_exp_input.strip())
+            except ValueError:
+                st.error(biz.EXPIRATION_FORMAT_MSG)
+            else:
+                st.session_state["pcr_ticker"] = pcr_t
+                st.session_state["pcr_exp_input"] = pcr_exp_input.strip()
+                st.session_state["pcr_live"] = pcr_live
+                st.session_state["pcr_ready"] = True
+                fetch_put_call_analysis.clear()
 
     _prev_pcr_live = st.session_state.get("_prev_pcr_live")
     if _prev_pcr_live is not None and _prev_pcr_live != st.session_state.get(
@@ -1674,13 +1663,13 @@ with tab_pcr:
 
     if not st.session_state.get("pcr_ready"):
         st.info(
-            "Enter a ticker (default **SPY**), an expiration like **06/20**, "
+            "Enter a ticker (default **SPY**), an expiration like **06/20** or **06/20/2028**, "
             "and click **Analyze**."
         )
     else:
         pcr_t = st.session_state["pcr_ticker"]
         pcr_exp_raw = st.session_state["pcr_exp_input"]
-        pcr_mm, pcr_dd = (int(x) for x in pcr_exp_raw.split("/"))
+        pcr_mm, pcr_dd, pcr_year = biz.parse_expiration_input(pcr_exp_raw)
         pcr_live_flag = st.session_state.get("pcr_live", False)
 
         if pcr_live_flag:
@@ -1705,7 +1694,7 @@ with tab_pcr:
                 st.error(f"`{pcr_t}` has no listed options on Yahoo Finance.")
         else:
             try:
-                pcr_exp_date = resolve_expiration(pcr_mm, pcr_dd, pcr_exps)
+                pcr_exp_date = resolve_expiration(pcr_mm, pcr_dd, pcr_exps, year=pcr_year)
             except ValueError:
                 upcoming = nearest_expirations(pcr_exps)
                 st.error(
@@ -2169,7 +2158,7 @@ with tab_cached:
                     use_container_width=False,
                     help=(
                         "Pre-fills the sidebar with this contract's ticker, "
-                        "type, MM/DD expiration, and strike — then you can "
+                        "type, expiration (MM/DD or MM/DD/YYYY), and strike — then you can "
                         "click Fetch Data to run forecasts/what-if on it."
                     ),
                 ):
@@ -2177,9 +2166,10 @@ with tab_cached:
                     st.session_state["fetch_inputs"] = {
                         "ticker": sel["ticker"],
                         "option_type": sel["option_type"],
-                        "expiration_input": exp_dt.strftime("%m/%d"),
+                        "expiration_input": exp_dt.strftime("%m/%d/%Y"),
                         "mm": exp_dt.month,
                         "dd": exp_dt.day,
+                        "year": exp_dt.year,
                         "strike": float(sel["strike"]),
                     }
                     st.rerun()
@@ -2193,13 +2183,10 @@ if submitted:
         st.error("Please enter a stock ticker.")
         st.stop()
 
-    if not MMDD_RE.match(expiration_input.strip()):
-        st.error("Expiration must be in MM/DD format (e.g. `06/26`).")
-        st.stop()
-
-    mm, dd = (int(x) for x in expiration_input.strip().split("/"))
-    if not (1 <= mm <= 12 and 1 <= dd <= 31):
-        st.error("Expiration MM/DD has an invalid month or day.")
+    try:
+        mm, dd, year = biz.parse_expiration_input(expiration_input.strip())
+    except ValueError:
+        st.error(biz.EXPIRATION_FORMAT_MSG)
         st.stop()
 
     strike = float(strike_input)
@@ -2213,6 +2200,7 @@ if submitted:
         "expiration_input": expiration_input.strip(),
         "mm": mm,
         "dd": dd,
+        "year": year,
         "strike": strike,
     }
 
@@ -2234,6 +2222,7 @@ option_type = _inputs["option_type"]
 expiration_input = _inputs["expiration_input"]
 mm = _inputs["mm"]
 dd = _inputs["dd"]
+year = _inputs.get("year")
 strike = _inputs["strike"]
 
 # 2. Look up available expirations ---------------------------------------- #
@@ -2259,7 +2248,7 @@ if not expirations:
 
 # 3. Resolve MM/DD -> full date ------------------------------------------- #
 try:
-    expiration_date = resolve_expiration(mm, dd, expirations)
+    expiration_date = resolve_expiration(mm, dd, expirations, year=year)
 except ValueError:
     upcoming = nearest_expirations(expirations)
     st.error(
@@ -3090,18 +3079,26 @@ with tab_whatif:
     sigma_used = scenario_sigma  # legacy alias for the sensitivity chart below
 
     # Parse target date
-    if not MMDD_RE.match(target_mmdd.strip()):
-        st.error("Target date must be in MM/DD format (e.g. `06/08`).")
+    try:
+        t_mm, t_dd, t_year = biz.parse_expiration_input(target_mmdd.strip())
+    except ValueError:
+        st.error("Target date must be MM/DD or MM/DD/YYYY (e.g. `06/08` or `06/08/2028`).")
         st.stop()
 
-    t_mm, t_dd = (int(x) for x in target_mmdd.strip().split("/"))
-    try:
-        target_date = date(today.year, t_mm, t_dd)
-        if target_date < today.date():
-            target_date = date(today.year + 1, t_mm, t_dd)
-    except ValueError:
-        st.error(f"Invalid target date: {target_mmdd}")
-        st.stop()
+    if t_year is not None:
+        try:
+            target_date = date(t_year, t_mm, t_dd)
+        except ValueError:
+            st.error(f"Invalid target date: {target_mmdd}")
+            st.stop()
+    else:
+        try:
+            target_date = date(today.year, t_mm, t_dd)
+            if target_date < today.date():
+                target_date = date(today.year + 1, t_mm, t_dd)
+        except ValueError:
+            st.error(f"Invalid target date: {target_mmdd}")
+            st.stop()
 
     target_ts = pd.Timestamp(target_date)
     if target_ts > exp_ts:

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import Plot from 'react-plotly.js'
-import { api, type GexResponse, type MoversResponse, type VixSpySignalResponse } from '../api'
-import { CacheHintBanner, CacheUpdatedBanner, DataModeBanner } from './DataModeBanner'
+import { api, type GexResponse, type MoversResponse, type OptionsTrackerRow, type VixSpySignalResponse } from '../api'
+import { CacheHintBanner, CacheUpdatedBanner, DataModeBanner, formatCentralDateTime, formatDataSource, isLiveCapableSource } from './DataModeBanner'
 import type { ContractForm, ContractLookup } from '../types'
 import { DataTable } from './DataTable'
 import { PriceChart } from './PriceChart'
@@ -43,12 +43,12 @@ function ContractSessionsTable({ sessions }: { sessions: import('../types').Sess
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => {
+          {rows.map((row, i) => {
             const dir = closeDirection(row.Close, row['Prev Close'])
             const delta =
               row['Prev Close'] != null ? row.Close - row['Prev Close'] : null
             return (
-              <tr key={row.Date}>
+              <tr key={`${row.Date}-${i}`}>
                 <td>{row.Date}</td>
                 <td>{formatMoney(row.Open)}</td>
                 <td>{formatMoney(row.High)}</td>
@@ -113,7 +113,12 @@ export function RecentActivityTab({ contract }: { contract: ContractLookup | nul
         {contract.cache_badge && <p className="badge">{contract.cache_badge}</p>}
         {contract.data_source && (
           <p className="muted">
-            Loaded from: <strong>{contract.data_source === 'live' ? 'Yahoo Finance (live)' : 'disk cache'}</strong>
+            Loaded from:{' '}
+            <strong>
+              {isLiveCapableSource(contract.data_source)
+                ? 'disk cache (+ live today in market hours)'
+                : 'disk cache'}
+            </strong>
           </p>
         )}
       </header>
@@ -126,6 +131,14 @@ export function RecentActivityTab({ contract }: { contract: ContractLookup | nul
       )}
 
       <h4>Last 30 Trading Sessions</h4>
+      {(contract.sessions_returned != null || contract.sessions_requested != null) && (
+        <p className="muted">
+          Showing <strong>{contract.sessions_returned ?? contract.sessions.length}</strong> of{' '}
+          <strong>{contract.sessions_requested ?? 30}</strong> sessions
+          {contract.data_source ? ` · ${contract.data_source}` : ''}
+        </p>
+      )}
+      {contract.sessions_note && <p className="info">{contract.sessions_note}</p>}
       <p className="muted">
         OHLCV is for the <strong>option contract</strong>. <strong>Close</strong> is{' '}
         <span className="close-up-inline">green</span> when above the prior session&apos;s close,{' '}
@@ -523,7 +536,7 @@ export function CallsPutsTab() {
       <DataModeBanner live={live} />
       <div className="form-row">
         <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} />
-        <input value={exp} onChange={(e) => setExp(e.target.value)} placeholder="MM/DD" />
+        <input value={exp} onChange={(e) => setExp(e.target.value)} placeholder="06/20 or 06/20/2028" />
         <label className="checkbox">
           <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
           Fetch live data
@@ -699,7 +712,8 @@ function VixSignalHelpNotes() {
         </li>
         <li>
           <strong>SPY</strong> is like a big basket of US stocks. When its trend is{' '}
-          <span className="close-up-inline">Bullish</span>, price has been going <em>up</em> lately.
+          <span className="close-up-inline">Bullish</span>, price has been going <em>up</em> lately
+          (VWAP, EMA9/20, RSI) <em>and</em> today is not down more than ~0.5%.
           <span className="close-down-inline"> Bearish</span> means the opposite.
         </li>
         <li>
@@ -798,6 +812,9 @@ export function VixSpySignalTab() {
             {data.signal === 'NO TRADE' && data.context_note && (
               <p className="banner info vix-context-note">{data.context_note}</p>
             )}
+            {data.session_note && data.signal !== 'NO TRADE' && (
+              <p className="banner info vix-context-note">{data.session_note}</p>
+            )}
           </div>
 
           <div className="vix-spotlight">
@@ -831,8 +848,25 @@ export function VixSpySignalTab() {
               <h4>What this VIX means for SPY</h4>
               <p>{data.vix_detail.spy_implication}</p>
               <p className="muted">
-                SPY now: <strong>{formatMoney(data.spy_technicals.close)}</strong> · VIX3M{' '}
-                {data.term_structure.vix3m_close.toFixed(2)} · ratio{' '}
+                SPY now: <strong>{formatMoney(data.spy_technicals.close)}</strong>
+                {data.spy_technicals.change_1d_pct != null && (
+                  <>
+                    {' '}
+                    · 1d{' '}
+                    <span
+                      className={
+                        data.spy_technicals.change_1d_pct >= 0
+                          ? 'close-up-inline'
+                          : 'close-down-inline'
+                      }
+                    >
+                      {data.spy_technicals.change_1d_pct >= 0 ? '+' : ''}
+                      {data.spy_technicals.change_1d_pct.toFixed(2)}%
+                    </span>
+                  </>
+                )}
+                {' '}
+                · VIX3M {data.term_structure.vix3m_close.toFixed(2)} · ratio{' '}
                 {data.term_structure.ratio.toFixed(3)} ({data.regime})
               </p>
             </div>
@@ -874,6 +908,33 @@ export function VixSpySignalTab() {
               <p className="vix-metric-value">{formatMoney(data.spy_technicals.close)}</p>
               <p className="muted">
                 Trend: <span className={trendLabelClass(data.trend)}>{data.trend}</span>
+                {data.structure_trend &&
+                  data.structure_trend !== data.trend && (
+                    <>
+                      {' '}
+                      (structure:{' '}
+                      <span className={trendLabelClass(data.structure_trend)}>
+                        {data.structure_trend}
+                      </span>
+                      )
+                    </>
+                  )}
+                {data.spy_technicals.change_1d_pct != null && (
+                  <>
+                    {' '}
+                    · 1d{' '}
+                    <span
+                      className={
+                        data.spy_technicals.change_1d_pct >= 0
+                          ? 'close-up-inline'
+                          : 'close-down-inline'
+                      }
+                    >
+                      {data.spy_technicals.change_1d_pct >= 0 ? '+' : ''}
+                      {data.spy_technicals.change_1d_pct.toFixed(2)}%
+                    </span>
+                  </>
+                )}
                 {data.spy_technicals.rsi14 != null
                   ? ` · RSI ${data.spy_technicals.rsi14.toFixed(1)}`
                   : ''}
@@ -1020,26 +1081,261 @@ function isGex0dteContext(data: GexResponse): boolean {
   return data.view === '0dte' || data.expiration_filter === '0dte'
 }
 
+function formatStrike(v: number | null | undefined): string {
+  return formatMoney(v)
+}
+
+function wallsArePinnedTogether(
+  putStrike: number | undefined,
+  callStrike: number | undefined,
+): boolean {
+  if (putStrike == null || callStrike == null) return false
+  return Math.abs(callStrike - putStrike) < 0.01
+}
+
+/** Plain label for which option expirations the GEX map uses. */
+function gexExpirationContext(data: GexResponse): string {
+  const label = data.expiration_label
+  if (data.view === '0dte' || data.expiration_filter === '0dte') {
+    const datePart = label.replace(/^0DTE\s*\(?/i, '').replace(/\)$/, '').trim()
+    return datePart ? `0DTE (expires today · ${datePart})` : '0DTE (expires today)'
+  }
+  if (data.expiration_filter === 'nearest') {
+    const d = label.replace(/^Nearest\s*\(?/i, '').replace(/\)$/, '').trim()
+    return d ? `Nearest expiration (${d})` : label
+  }
+  if (data.expiration_filter === 'all') {
+    return `All expirations combined — ${label}`
+  }
+  if (data.expiration_filter === 'custom') {
+    return `Selected expiration — ${label}`
+  }
+  return label
+}
+
+function gexPrimaryExpirationDate(data: GexResponse): string | null {
+  if (data.odte_date) return data.odte_date
+  if (data.expirations_used?.length) return data.expirations_used[0]
+  const m = data.expiration_label.match(/\d{4}-\d{2}-\d{2}/)
+  return m ? m[0] : null
+}
+
+/** When breaks need to happen for CALL vs PUT on this map. */
+function gexTimeframeNote(data: GexResponse): string {
+  const is0dte = isGex0dteContext(data)
+  const only0dteToggle =
+    data.view === '0dte' && data.expiration_filter !== '0dte'
+  const expDate = gexPrimaryExpirationDate(data)
+
+  if (is0dte || only0dteToggle) {
+    const day = expDate ?? 'today'
+    return `**When?** **0DTE / today (${day})** — watch for breaks **before today’s market close** (options expire end of session).`
+  }
+  if (data.expiration_filter === 'nearest' && expDate) {
+    return `**When?** **Nearest expiration (${expDate})** — breaks matter **before that expiration’s close** (not weeks later).`
+  }
+  if (data.expiration_filter === 'custom' && expDate) {
+    return `**When?** **Selected expiration (${expDate})** — use CALL/PUT triggers **before that date’s close**.`
+  }
+  if (data.expiration_filter === 'all') {
+    const n = data.expirations_used?.length ?? 0
+    const nearest = data.expirations_used?.[0]
+    return nearest
+      ? `**When?** **Blended map (${n} expirations)** — nearest in the mix is **${nearest}**; intraday often reacts to that date’s walls first.`
+      : `**When?** **Blended across multiple expirations** — treat breaks as valid **this week**, not months out.`
+  }
+  return `**When?** ${gexExpirationContext(data)} — act **before that expiration closes**, not on a far-future move.`
+}
+
+function gexWaitHeadline(
+  data: GexResponse,
+  ticker: string,
+  putStrike?: number,
+  callStrike?: number,
+  pinned?: boolean,
+): string {
+  const timeShort = isGex0dteContext(data)
+    ? '0DTE · before today’s close'
+    : gexPrimaryExpirationDate(data)
+      ? `before ${gexPrimaryExpirationDate(data)} close`
+      : gexExpirationContext(data)
+
+  if (pinned && putStrike != null) {
+    return `WAIT — ${ticker} must break ${formatStrike(putStrike)} UP for CALLs or DOWN for PUTs (${timeShort})`
+  }
+
+  const parts: string[] = []
+  if (callStrike != null) {
+    parts.push(`break **above** ${formatStrike(callStrike)} → **CALL** (up)`)
+  }
+  if (putStrike != null) {
+    parts.push(`break **below** ${formatStrike(putStrike)} → **PUT** (down)`)
+  }
+  if (parts.length) {
+    return `WAIT — ${ticker} needs ${parts.join('; ')} · ${timeShort}`
+  }
+  return 'WAIT — no clear CALL or PUT side yet.'
+}
+
+function buildBreakPlaybookBullets(
+  data: GexResponse,
+  opts: {
+    ticker: string
+    putStrike?: number
+    callStrike?: number
+    pinned: boolean
+  },
+): string[] {
+  const { ticker, putStrike, callStrike, pinned } = opts
+  const out: string[] = [gexTimeframeNote(data)]
+
+  const holdPhrase = isGex0dteContext(data)
+    ? 'and **hold above** (not just a quick spike) **into the close**'
+    : 'and **hold** (not just a quick spike) **before expiration close**'
+
+  const holdBelowPhrase = isGex0dteContext(data)
+    ? 'and **stay below** **into the close**'
+    : 'and **stay below** **before expiration close**'
+
+  if (pinned && putStrike != null) {
+    out.push(
+      `**CALL (upward):** ${ticker} breaks **above** ${formatStrike(putStrike)} ${holdPhrase} → lean **BUY CALL** for **${gexExpirationContext(data)}**.`,
+    )
+    out.push(
+      `**PUT (downward):** ${ticker} breaks **below** ${formatStrike(putStrike)} ${holdBelowPhrase} → lean **BUY PUT** for **${gexExpirationContext(data)}**.`,
+    )
+    return out
+  }
+
+  if (callStrike != null) {
+    out.push(
+      `**CALL (upward):** Break **resistance** at **${formatStrike(callStrike)}** ${holdPhrase} → price can run **up**; lean **BUY CALL**.`,
+    )
+  }
+  if (putStrike != null) {
+    out.push(
+      `**PUT (downward):** Break **support** at **${formatStrike(putStrike)}** ${holdBelowPhrase} → price can slide **down**; lean **BUY PUT**.`,
+    )
+  }
+  if (callStrike != null && putStrike != null) {
+    out.push(
+      `**Still in the middle?** Between ${formatStrike(putStrike)} and ${formatStrike(callStrike)} → **WAIT** — no CALL or PUT until one side **clearly** breaks.`,
+    )
+  }
+
+  return out
+}
+
+function distancePhrase(spot: number, level: number): string {
+  const diff = level - spot
+  if (Math.abs(diff) < 0.005) return 'price is **right at** this level'
+  const pct = (Math.abs(diff) / spot) * 100
+  if (diff > 0) {
+    return `${formatMoney(diff)} (**+${pct.toFixed(2)}%**) **above** current price`
+  }
+  return `${formatMoney(Math.abs(diff))} (**−${pct.toFixed(2)}%**) **below** current price`
+}
+
+function buildWaitClarityBullets(
+  data: GexResponse,
+  opts: {
+    spot: number
+    spotNote: string
+    putStrike?: number
+    callStrike?: number
+    pinned: boolean
+  },
+): string[] {
+  const { ticker } = data
+  const { spot, spotNote, putStrike, callStrike, pinned } = opts
+  const out: string[] = []
+
+  const scopeExtra =
+    data.view === '0dte' && data.expiration_filter !== '0dte'
+      ? ' · **0DTE-only** toggle is ON (only today’s options counted)'
+      : ''
+
+  out.push(`**Which expiration?** ${gexExpirationContext(data)}${scopeExtra}.`)
+  out.push(`**Where is ${ticker} now?** **${formatMoney(spot)}**${spotNote}.`)
+
+  if (pinned && putStrike != null) {
+    out.push(
+      `**Support & resistance (same strike):** **${formatStrike(putStrike)}** — the biggest call **and** put piles sit here (pin / magnet zone).`,
+    )
+  } else {
+    if (callStrike != null) {
+      out.push(
+        `**Resistance (call wall / ceiling):** **${formatStrike(callStrike)}** — ${distancePhrase(spot, callStrike)}.`,
+      )
+    }
+    if (putStrike != null) {
+      out.push(
+        `**Support (put wall / floor):** **${formatStrike(putStrike)}** — ${distancePhrase(spot, putStrike)}.`,
+      )
+    }
+  }
+
+  out.push(...buildBreakPlaybookBullets(data, { ticker, putStrike, callStrike, pinned }))
+
+  out.push(
+    `**Why WAIT — no clear side?** ${ticker} has **not** hit a **CALL** or **PUT** trigger yet for **${gexExpirationContext(data)}**.`,
+  )
+
+  return out
+}
+
+function isWaitStyleLean(lean: GexLean): boolean {
+  return lean === 'WAIT' || lean === 'RANGE'
+}
+
+function applyWaitClarityBullets(
+  lean: GexLean,
+  bullets: string[],
+  data: GexResponse,
+  ctx: {
+    spot: number
+    spotNote: string
+    putStrike?: number
+    callStrike?: number
+    pinned: boolean
+  },
+): string[] {
+  if (!isWaitStyleLean(lean)) return bullets
+
+  const clarity = buildWaitClarityBullets(data, ctx)
+  const rest = bullets.filter(
+    (b) =>
+      !b.includes('Picture a hallway') &&
+      !b.includes('pin / magnet') &&
+      !b.startsWith('For **'),
+  )
+  return [...clarity, ...rest]
+}
+
 function deriveGexPlainEnglish(data: GexResponse): {
   lean: GexLean
   headline: string
   bullets: string[]
 } {
-  const { spot, metrics, call_wall, put_wall, gamma_flip } = data
+  const { spot, metrics, call_wall, put_wall, gamma_flip, ticker } = data
   const flip = gamma_flip ?? metrics.gamma_flip ?? null
   const positive = metrics.regime.includes('Positive')
   const negative = metrics.regime.includes('Negative')
   const is0dte = isGex0dteContext(data)
   const expNote = is0dte ? '0DTE (today)' : 'this expiration set'
+  const spotNote =
+    data.spot_source === 'live' ? ' (live quote)' : ' (last daily close from cache)'
 
   const pctDist = (level: number) => (Math.abs(spot - level) / spot) * 100
   const putStrike = put_wall?.strike
   const callStrike = call_wall?.strike
+  const pinned = wallsArePinnedTogether(putStrike, callStrike)
 
   const nearPct = 0.55
-  const nearPut = putStrike != null && pctDist(putStrike) <= nearPct
-  const nearCall = callStrike != null && pctDist(callStrike) <= nearPct
+  const nearPut = !pinned && putStrike != null && pctDist(putStrike) <= nearPct
+  const nearCall = !pinned && callStrike != null && pctDist(callStrike) <= nearPct
   const inHallway =
+    !pinned &&
     putStrike != null &&
     callStrike != null &&
     spot > putStrike &&
@@ -1050,9 +1346,13 @@ function deriveGexPlainEnglish(data: GexResponse): {
 
   const bullets: string[] = []
 
-  if (putStrike != null && callStrike != null) {
+  if (pinned && putStrike != null) {
     bullets.push(
-      `Picture a hallway: **floor (put wall) ≈ $${putStrike}**, **ceiling (call wall) ≈ $${callStrike}**. SPY is at **${formatMoney(spot)}**.`,
+      `Both the biggest **call** and **put** piles sit on **${formatStrike(putStrike)}** — a **pin / magnet** strike. **${ticker}** is at **${formatMoney(spot)}**${spotNote}.`,
+    )
+  } else if (putStrike != null && callStrike != null) {
+    bullets.push(
+      `Picture a hallway: **floor (put wall) ${formatStrike(putStrike)}**, **ceiling (call wall) ${formatStrike(callStrike)}**. **${ticker}** is at **${formatMoney(spot)}**${spotNote}.`,
     )
   }
 
@@ -1073,72 +1373,76 @@ function deriveGexPlainEnglish(data: GexResponse): {
   if (flip != null) {
     if (belowFlip) {
       bullets.push(
-        `SPY is **below** the gamma flip (**${formatMoney(flip)}**). Price can feel **choppier** until it gets above that line.`,
+        `**${ticker}** is **below** the gamma flip (**${formatMoney(flip)}**). Price can feel **choppier** until it gets above that line.`,
       )
     } else if (aboveFlip) {
       bullets.push(
-        `SPY is **above** the gamma flip (**${formatMoney(flip)}**). Moves **above** that line often feel a bit **calmer / pinned**.`,
+        `**${ticker}** is **above** the gamma flip (**${formatMoney(flip)}**). Moves **above** that line often feel a bit **calmer / pinned**.`,
       )
     } else {
-      bullets.push(`SPY is **right on** the gamma flip (**${formatMoney(flip)}**) — a tug-of-war zone.`)
+      bullets.push(
+        `**${ticker}** is **right on** the gamma flip (**${formatMoney(flip)}**) — a tug-of-war zone.`,
+      )
     }
   }
 
   let lean: GexLean = 'WAIT'
-  let headline = 'No strong CALL or PUT yet — read the hallway first.'
+  let headline = gexWaitHeadline(data, ticker, putStrike, callStrike, pinned)
 
-  if (nearPut && positive) {
+  if (pinned && positive) {
+    lean = 'RANGE'
+    headline = gexWaitHeadline(data, ticker, putStrike, callStrike, true)
+  } else if (nearPut && positive) {
     lean = 'CALL'
     headline = 'Near the floor — CALL only if SPY bounces UP, not if it falls through.'
     bullets.push(
-      `For **${expNote}**: think **CALL** only if price **holds above** ~$${putStrike} and starts climbing. If it **breaks below** the floor → **PUT** idea instead.`,
+      `For **${expNote}**: think **CALL** only if price **holds above** ${formatStrike(putStrike!)} and starts climbing. If it **breaks below** the floor → **PUT** idea instead.`,
     )
   } else if (nearCall && positive) {
     lean = 'PUT'
     headline = 'Near the ceiling — PUT only if SPY rejects DOWN, not if it blasts through.'
     bullets.push(
-      `For **${expNote}**: think **PUT** only if price **fails below** ~$${callStrike} after touching it. If it **breaks above** the ceiling → **CALL** idea instead.`,
+      `For **${expNote}**: think **PUT** only if price **fails below** ${formatStrike(callStrike!)} after touching it. If it **breaks above** the ceiling → **CALL** idea instead.`,
     )
   } else if (inHallway && positive) {
     lean = 'RANGE'
-    headline = 'Stuck in the middle — neither CALL nor PUT has the green light.'
-    bullets.push(
-      `For **${expNote}**: **WAIT** unless SPY clearly **breaks above** ~$${callStrike} (CALL side) or **below** ~$${putStrike} (PUT side). In the middle = usually **no trade**.`,
-    )
+    headline = gexWaitHeadline(data, ticker, putStrike, callStrike, pinned)
   } else if (inHallway && negative) {
     lean = 'WAIT'
-    headline = 'Middle of the hallway + wild gamma — wait for a clear break.'
-    bullets.push(
-      `For **${expNote}**: pick **CALL** only on a strong **break above** ~$${callStrike}, or **PUT** on a strong **break below** ~$${putStrike}. Until then → **WAIT**.`,
-    )
+    headline = gexWaitHeadline(data, ticker, putStrike, callStrike, pinned)
   } else if (nearPut && negative) {
     lean = 'PUT'
     headline = 'Near the floor with wild gamma — PUT if the floor breaks.'
     bullets.push(
-      `For **${expNote}**: **PUT** if price **slides under** ~$${putStrike}. **CALL** only on a sharp **bounce** that holds above the floor.`,
+      `For **${expNote}**: **PUT** if price **slides under** ${formatStrike(putStrike!)}. **CALL** only on a sharp **bounce** that holds above the floor.`,
     )
   } else if (nearCall && negative) {
     lean = 'CALL'
     headline = 'Near the ceiling with wild gamma — CALL if the ceiling breaks.'
     bullets.push(
-      `For **${expNote}**: **CALL** if price **punches above** ~$${callStrike}. **PUT** if it **rejects** and turns down hard.`,
+      `For **${expNote}**: **CALL** if price **punches above** ${formatStrike(callStrike!)}. **PUT** if it **rejects** and turns down hard.`,
     )
   } else {
-    bullets.push(
-      `For **${expNote}**: use **CALL** when price is pushing **up through** the call wall area; use **PUT** when pushing **down through** the put wall area. Otherwise **WAIT**.`,
-    )
+    headline = gexWaitHeadline(data, ticker, putStrike, callStrike, pinned)
   }
 
-  bullets.push(
+  const finalBullets = applyWaitClarityBullets(lean, bullets, data, {
+    spot,
+    spotNote,
+    putStrike,
+    callStrike,
+    pinned,
+  })
+
+  finalBullets.push(
     'This is a **map of dealer hedging**, not a promise. Always ask an adult before real money — especially on 0DTE.',
   )
 
-  return { lean, headline, bullets }
+  return { lean, headline, bullets: finalBullets }
 }
 
 function GexPlainEnglishBlock({ data }: { data: GexResponse }) {
   const { lean, headline, bullets } = deriveGexPlainEnglish(data)
-  const is0dte = isGex0dteContext(data)
 
   return (
     <div className={gexLeanHeroClass(lean)}>
@@ -1154,8 +1458,9 @@ function GexPlainEnglishBlock({ data }: { data: GexResponse }) {
         ))}
       </ul>
       <p className="muted gex-plain-meta">
-        Reading: {data.ticker} · {data.expiration_label}
-        {is0dte ? ' · 0DTE focus' : ''} · {data.metrics.regime}
+        Map scope: {gexExpirationContext(data)}
+        {data.view === '0dte' && data.expiration_filter !== '0dte' ? ' · 0DTE-only ON' : ''} ·{' '}
+        {data.metrics.regime}
       </p>
     </div>
   )
@@ -1562,8 +1867,9 @@ export function GexTab() {
       {data && m && (
         <>
           <p className="muted">
-            {data.ticker} · {data.expiration_label} · spot {formatMoney(data.spot)} ·{' '}
-            {data.data_source === 'live' ? 'live' : 'cache'}
+            {data.ticker} · {data.expiration_label} · spot {formatMoney(data.spot)}
+            {data.spot_source === 'live' ? ' · live quote' : ''} ·{' '}
+            {formatDataSource(data.data_source)}
           </p>
 
           <GexPlainEnglishBlock data={data} />
@@ -1591,7 +1897,12 @@ export function GexTab() {
             </div>
             <div className="gex-metric-card">
               <span className="gex-metric-label">Spot</span>
-              <span className="gex-metric-value">{formatMoney(data.spot)}</span>
+              <span className="gex-metric-value">
+                {formatMoney(data.spot)}
+                {data.spot_source === 'live' && (
+                  <span className="gex-spot-live"> live</span>
+                )}
+              </span>
             </div>
             <div className="gex-metric-card">
               <span className="gex-metric-label">Regime</span>
@@ -1603,13 +1914,13 @@ export function GexTab() {
             {data.call_wall && (
               <p>
                 <span className="gex-highlight-call">Call wall</span> strike{' '}
-                <strong>{data.call_wall.strike}</strong> · GEX {formatGex(data.call_wall.gex)}
+                <strong>{formatStrike(data.call_wall.strike)}</strong> · GEX {formatGex(data.call_wall.gex)}
               </p>
             )}
             {data.put_wall && (
               <p>
                 <span className="gex-highlight-put">Put wall</span> strike{' '}
-                <strong>{data.put_wall.strike}</strong> · GEX {formatGex(data.put_wall.gex)}
+                <strong>{formatStrike(data.put_wall.strike)}</strong> · GEX {formatGex(data.put_wall.gex)}
               </p>
             )}
             {data.gamma_flip != null && (
@@ -1861,7 +2172,7 @@ export function WeekdaySessionsTab() {
         <>
           <p className="muted">
             {data.ticker} · {data.weekday} · {data.sessions_returned} session(s) ·{' '}
-            {data.data_source === 'live' ? 'live' : 'cache'}
+            {formatDataSource(data.data_source)}
           </p>
           <CacheUpdatedBanner
             live={live}
@@ -1992,7 +2303,7 @@ export function Last20DaysTab() {
         <>
           <p className="muted">
             {data.ticker} · {data.sessions_returned} session(s) ·{' '}
-            {data.data_source === 'live' ? 'live' : 'cache'}
+            {formatDataSource(data.data_source)}
           </p>
           <CacheUpdatedBanner
             live={live}
@@ -2209,7 +2520,7 @@ export function SpxPivotsTab() {
       {data && (
         <>
           <p className="muted">
-            {data.display_name} ({data.ticker}) · {data.data_source === 'live' ? 'live' : 'cache'}
+            {data.display_name} ({data.ticker}) · {formatDataSource(data.data_source)}
             {data.session_date ? ` · session ${data.session_date}` : ''}
           </p>
           <CacheUpdatedBanner live={live} cacheUpdatedAt={data.cache_meta?.cache_updated_at} />
@@ -2412,6 +2723,238 @@ export function StocksOnWatchlistTab() {
                       type="button"
                       className="btn btn-sm danger"
                       onClick={() => removeTicker(row.Stock)}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Options tracker — calls & puts you added, entry vs now
+// ---------------------------------------------------------------------------
+function trackerRowClass(direction: OptionsTrackerRow['direction']): string {
+  if (direction === 'up') return 'tracker-row-up'
+  if (direction === 'down') return 'tracker-row-down'
+  if (direction === 'flat') return 'tracker-row-flat'
+  return 'tracker-row-unknown'
+}
+
+function trackerDirectionLabel(direction: OptionsTrackerRow['direction']): string {
+  if (direction === 'up') return 'UP'
+  if (direction === 'down') return 'DOWN'
+  if (direction === 'flat') return 'FLAT'
+  return '—'
+}
+
+export function OptionsTrackerTab({ form }: { form: ContractForm }) {
+  const [live, setLive] = useState(false)
+  const [ticker, setTicker] = useState(form.ticker)
+  const [optionType, setOptionType] = useState<'Call' | 'Put'>(form.optionType)
+  const [expiration, setExpiration] = useState(form.expirationMmdd)
+  const [strike, setStrike] = useState(form.strike)
+  const [entryPrice, setEntryPrice] = useState('')
+  const [data, setData] = useState<import('../api').OptionsTrackerResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+
+  const load = () => {
+    setError(null)
+    api
+      .optionsTracker(live)
+      .then(setData)
+      .catch((e: Error) => setError(e.message))
+  }
+
+  useEffect(() => {
+    load()
+  }, [live])
+
+  useEffect(() => {
+    setTicker(form.ticker)
+    setOptionType(form.optionType)
+    setExpiration(form.expirationMmdd)
+    setStrike(form.strike)
+  }, [form.ticker, form.optionType, form.expirationMmdd, form.strike])
+
+  const addPosition = () => {
+    const t = ticker.trim().toUpperCase()
+    if (!t || !expiration.trim() || strike <= 0) {
+      setError('Enter ticker, expiration, and strike.')
+      return
+    }
+    setAdding(true)
+    setError(null)
+    const parsedEntry = entryPrice.trim() ? parseFloat(entryPrice) : null
+    api
+      .addOptionsTracker({
+        ticker: t,
+        optionType,
+        expirationMmdd: expiration.trim(),
+        strike,
+        entryPrice: parsedEntry && parsedEntry > 0 ? parsedEntry : null,
+        liveFetch: live,
+      })
+      .then(() => {
+        setEntryPrice('')
+        load()
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setAdding(false))
+  }
+
+  const removePosition = (id: string) => {
+    setError(null)
+    api
+      .removeOptionsTracker(id)
+      .then(load)
+      .catch((e: Error) => setError(e.message))
+  }
+
+  return (
+    <div>
+      <h3>Track My Calls &amp; Puts</h3>
+      <p className="muted">
+        Log options you bought or are watching. Each row shows when you added it, entry price,
+        current price, and <span className="close-up-inline">green</span> /{' '}
+        <span className="close-down-inline">red</span> for up or down vs entry.
+      </p>
+
+      <DataModeBanner live={live} />
+
+      <div className="form-row tracker-add-form">
+        <input
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value.toUpperCase())}
+          placeholder="Ticker"
+          aria-label="Ticker"
+        />
+        <select
+          value={optionType}
+          onChange={(e) => setOptionType(e.target.value as 'Call' | 'Put')}
+          aria-label="Option type"
+        >
+          <option value="Call">Call</option>
+          <option value="Put">Put</option>
+        </select>
+        <input
+          value={expiration}
+          onChange={(e) => setExpiration(e.target.value)}
+          placeholder="06/20 or 06/20/2028"
+          aria-label="Expiration"
+        />
+        <input
+          type="number"
+          step="0.5"
+          min={0}
+          value={strike}
+          onChange={(e) => setStrike(parseFloat(e.target.value) || 0)}
+          placeholder="Strike"
+          aria-label="Strike"
+        />
+        <input
+          type="number"
+          step="0.01"
+          min={0}
+          value={entryPrice}
+          onChange={(e) => setEntryPrice(e.target.value)}
+          placeholder="Entry $ (optional)"
+          aria-label="Entry price"
+        />
+        <button type="button" className="btn primary" onClick={addPosition} disabled={adding}>
+          {adding ? 'Adding…' : 'Add position'}
+        </button>
+        <label className="checkbox">
+          <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+          Fetch live data
+        </label>
+        <button type="button" className="btn" onClick={load}>
+          Refresh prices
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      <CacheHintBanner message={data?.cache_hint} />
+
+      {!data?.rows?.length ? (
+        <p className="info">
+          No tracked positions yet — fill in the form above (or use the sidebar) and click{' '}
+          <strong>Add position</strong>.
+        </p>
+      ) : (
+        <div className="table-wrap">
+          <table className="tracker-table">
+            <thead>
+              <tr>
+                <th>Added</th>
+                <th>Contract</th>
+                <th>Entry</th>
+                <th>Now</th>
+                <th>Change</th>
+                <th>Direction</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row) => (
+                <tr key={row.id} className={trackerRowClass(row.direction)}>
+                  <td>
+                    {row.added_at ? formatCentralDateTime(row.added_at) : '—'}
+                  </td>
+                  <td>
+                    <strong>{row.ticker}</strong>{' '}
+                    <span
+                      className={
+                        row.option_type === 'Call' ? 'close-up-inline' : 'close-down-inline'
+                      }
+                    >
+                      {row.option_type}
+                    </span>
+                    <br />
+                    <span className="muted">
+                      ${row.strike} · exp {row.expiration_date}
+                    </span>
+                  </td>
+                  <td>{formatMoney(row.entry_price)}</td>
+                  <td>
+                    {row.current_price != null ? formatMoney(row.current_price) : '—'}
+                  </td>
+                  <td>
+                    {row.change_abs != null && row.change_pct != null ? (
+                      <>
+                        {row.change_abs >= 0 ? '+' : ''}
+                        {formatMoney(row.change_abs)} ({row.change_pct >= 0 ? '+' : ''}
+                        {row.change_pct.toFixed(2)}%)
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td>
+                    <span
+                      className={
+                        row.direction === 'up'
+                          ? 'tracker-dir-up'
+                          : row.direction === 'down'
+                            ? 'tracker-dir-down'
+                            : 'tracker-dir-flat'
+                      }
+                    >
+                      {trackerDirectionLabel(row.direction)}
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn-sm danger"
+                      onClick={() => removePosition(row.id)}
                     >
                       Remove
                     </button>

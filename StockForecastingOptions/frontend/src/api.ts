@@ -82,6 +82,30 @@ export interface TomorrowWatchlistRow {
   'Overall Trend'?: string
 }
 
+export interface OptionsTrackerRow {
+  id: string
+  ticker: string
+  option_type: 'Call' | 'Put'
+  expiration_input?: string | null
+  expiration_date: string
+  strike: number
+  entry_price: number
+  added_at?: string | null
+  current_price?: number | null
+  change_abs?: number | null
+  change_pct?: number | null
+  direction: 'up' | 'down' | 'flat' | 'unknown'
+  price_unavailable?: boolean
+}
+
+export interface OptionsTrackerResponse {
+  count: number
+  live_fetch?: boolean
+  data_source?: string
+  cache_hint?: string | null
+  rows: OptionsTrackerRow[]
+}
+
 export interface CacheMeta {
   symbol?: string
   last_bar_date?: string
@@ -198,6 +222,8 @@ export interface VixSpySignalResponse {
   regime: 'Contango' | 'Backwardation'
   stress: 'EXTREME_HIGH' | 'EXTREME_LOW' | 'NORMAL'
   trend: 'Bullish' | 'Bearish' | 'Neutral'
+  structure_trend?: 'Bullish' | 'Bearish' | 'Neutral'
+  session_note?: string | null
   rule_matched: string
   context_note?: string | null
   reasons: string[]
@@ -230,6 +256,7 @@ export interface VixSpySignalResponse {
   spy_technicals: {
     symbol: string
     close: number
+    change_1d_pct?: number | null
     vwap?: number | null
     ema9: number
     ema20: number
@@ -283,6 +310,7 @@ export interface GexResponse {
   call_wall?: { strike: number; gex: number } | null
   put_wall?: { strike: number; gex: number } | null
   gamma_flip?: number | null
+  spot_source?: 'live' | 'cache'
   by_strike: GexStrikeRow[]
   formula: string
   disclaimer: string
@@ -354,6 +382,35 @@ export const api = {
   removeTomorrowWatchlist: (symbol: string) =>
     request<{ symbol: string; symbols: string[] }>(
       `/api/tomorrow-watchlist/${encodeURIComponent(symbol)}`,
+      { method: 'DELETE' },
+    ),
+
+  optionsTracker: (liveFetch: boolean) =>
+    request<OptionsTrackerResponse>(`/api/options-tracker?live_fetch=${liveFetch}`),
+
+  addOptionsTracker: (payload: {
+    ticker: string
+    optionType: 'Call' | 'Put'
+    expirationMmdd: string
+    strike: number
+    entryPrice?: number | null
+    liveFetch: boolean
+  }) =>
+    request<{ id: string; count: number }>('/api/options-tracker', {
+      method: 'POST',
+      body: JSON.stringify({
+        ticker: payload.ticker,
+        option_type: payload.optionType,
+        expiration_mmdd: payload.expirationMmdd,
+        strike: payload.strike,
+        entry_price: payload.entryPrice ?? null,
+        live_fetch: payload.liveFetch,
+      }),
+    }),
+
+  removeOptionsTracker: (id: string) =>
+    request<{ id: string; count: number }>(
+      `/api/options-tracker/${encodeURIComponent(id)}`,
       { method: 'DELETE' },
     ),
 

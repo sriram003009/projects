@@ -14,7 +14,10 @@ class LiveFetchQuery(BaseModel):
 class ContractRequest(BaseModel):
     ticker: str
     option_type: Literal["Call", "Put"] = "Call"
-    expiration_mmdd: str = Field(..., description="MM/DD format")
+    expiration_mmdd: str = Field(
+        ...,
+        description="MM/DD, MM/DD/YYYY (e.g. 06/26/2028), or YYYY-MM-DD",
+    )
     strike: float = Field(..., gt=0)
     live_fetch: bool = False
 
@@ -38,6 +41,22 @@ class SmaCheckRequest(BaseModel):
 
 class TomorrowWatchlistAddRequest(BaseModel):
     ticker: str = Field(..., min_length=1, description="Stock ticker to watch tomorrow")
+
+
+class OptionsTrackerAddRequest(BaseModel):
+    ticker: str = Field(..., min_length=1)
+    option_type: Literal["Call", "Put"] = "Call"
+    expiration_mmdd: str = Field(
+        ...,
+        description="MM/DD, MM/DD/YYYY (e.g. 06/26/2028), or YYYY-MM-DD",
+    )
+    strike: float = Field(..., gt=0)
+    entry_price: float | None = Field(
+        default=None,
+        gt=0,
+        description="Optional; defaults to last price when added",
+    )
+    live_fetch: bool = False
 
 
 class WeekdaySessionsRequest(BaseModel):

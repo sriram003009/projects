@@ -20,6 +20,9 @@ export interface ContractLookup {
   cache_badge: string | null
   weekly_trend: WeeklyTrend | null
   sessions: SessionRow[]
+  sessions_requested?: number
+  sessions_returned?: number
+  sessions_note?: string | null
   context: {
     spot: number
     sigma: number

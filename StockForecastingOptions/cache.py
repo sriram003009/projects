@@ -5,17 +5,19 @@ Caches three kinds of objects in ``./.cache/``:
   2. Option expiration lists (JSON) — small, rarely-changing
   3. Option chain calls/puts (parquet pair) — per (ticker, expiration)
 
-Two modes via ``live_fetch``:
-  - ``live_fetch=False`` (default in app):
-        Only reads from disk. **No network calls at all.** Returns whatever
-        is cached, or empty/None if nothing is cached.
-  - ``live_fetch=True``:
-        For OHLCV: incremental — fetches only the daily delta since the
-        latest cached date. Caches and returns the merged data.
-        For expirations / chain: refreshes the cached snapshot.
+Fetch policy (all tabs share this via ``disk_cached_*`` helpers):
 
-Plus a ``cache_metadata()`` helper that returns the file mtime and last bar
-date so the UI can show "Data updated: 2026-06-06 22:58 (cache)".
+  - ``live_fetch=False`` (default):
+        Disk cache only — **no network**. Missing data → empty / cache-miss errors.
+
+  - ``live_fetch=True``:
+        **Cache-first.** Prior sessions come from disk when present; missing
+        historical bars are backfilled from Yahoo. **Today's** bar (and option
+        chains / expirations) hit the network **only during US market hours**
+        (Mon–Fri 9:30 AM–4:00 PM Eastern); outside that window cached values are
+        reused.
+
+Plus ``cache_metadata()`` for UI badges ("Data updated: …").
 """
 
 from __future__ import annotations
@@ -23,12 +25,15 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
 
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
+
+US_EASTERN = ZoneInfo("America/New_York")
 
 # Approximate calendar-day spans for the yfinance ``period`` strings we use.
 # Used to detect when an existing cache is too short for a new request, so the
@@ -76,6 +81,36 @@ def _last_business_day() -> pd.Timestamp:
     return bdays[-1].normalize()
 
 
+def _now_eastern() -> dt.datetime:
+    return dt.datetime.now(US_EASTERN)
+
+
+def is_us_market_hours(now: dt.datetime | None = None) -> bool:
+    """True on Mon–Fri between 9:30 AM and 4:00 PM US/Eastern."""
+    now = now or _now_eastern()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=US_EASTERN)
+    else:
+        now = now.astimezone(US_EASTERN)
+    if now.weekday() >= 5:
+        return False
+    open_t = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    close_t = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    return open_t <= now <= close_t
+
+
+def should_live_refresh(live_fetch: bool, now: dt.datetime | None = None) -> bool:
+    """Whether intraday / snapshot Yahoo calls are allowed right now."""
+    return bool(live_fetch and is_us_market_hours(now))
+
+
+def data_source_label(live_fetch: bool, now: dt.datetime | None = None) -> str:
+    """Human label for API responses: cache vs cache+live."""
+    if not live_fetch:
+        return "cache"
+    return "cache+live" if should_live_refresh(live_fetch, now) else "cache"
+
+
 def _strip_tz(df: pd.DataFrame | None) -> pd.DataFrame | None:
     """Drop timezone info from a DatetimeIndex; no-op for other index types."""
     if df is None or df.empty:
@@ -85,6 +120,52 @@ def _strip_tz(df: pd.DataFrame | None) -> pd.DataFrame | None:
         df = df.copy()
         df.index = idx.tz_localize(None)
     return df
+
+
+def normalize_daily_ohlcv(df: pd.DataFrame | None) -> pd.DataFrame:
+    """Collapse to one OHLCV row per calendar day (last bar wins)."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+
+    out = _strip_tz(df.copy())
+    if not isinstance(out.index, pd.DatetimeIndex):
+        if "Date" in out.columns:
+            out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+            out = out.set_index("Date")
+        else:
+            out.index = pd.to_datetime(out.index, errors="coerce")
+
+    out.index = out.index.normalize()
+    out = out[~out.index.isna()]
+    out = out[~out.index.duplicated(keep="last")]
+    out.sort_index(inplace=True)
+    return out
+
+
+def _bootstrap_history(symbol: str, min_period: str) -> pd.DataFrame:
+    """Fetch the widest OHLCV window Yahoo returns for *symbol*."""
+    frames: list[pd.DataFrame] = []
+    start = (dt.date.today() - dt.timedelta(days=150)).isoformat()
+    for kwargs in (
+        {"period": min_period},
+        {"period": "max"},
+        {"start": start},
+    ):
+        try:
+            chunk = yf.Ticker(symbol).history(**kwargs)
+        except Exception:
+            continue
+        chunk = normalize_daily_ohlcv(chunk)
+        if chunk is not None and not chunk.empty:
+            frames.append(chunk)
+
+    if not frames:
+        return pd.DataFrame()
+
+    merged = pd.concat(frames)
+    merged = merged[~merged.index.duplicated(keep="last")]
+    merged.sort_index(inplace=True)
+    return merged
 
 
 def _now_iso_minute() -> str:
@@ -99,7 +180,7 @@ def disk_cached_history(
     min_period: str = "3mo",
     live_fetch: bool = True,
 ) -> pd.DataFrame:
-    """Get OHLCV with disk cache + optional incremental live fetch."""
+    """Get OHLCV: cache-first; backfill gaps; refresh today only in market hours."""
     path = CACHE_DIR / _safe_filename(symbol)
 
     cached: pd.DataFrame | None = None
@@ -107,6 +188,8 @@ def disk_cached_history(
         try:
             cached = pd.read_parquet(path)
             cached = _strip_tz(cached)
+            if cached is not None and not cached.empty:
+                cached = normalize_daily_ohlcv(cached)
         except Exception:
             cached = None
 
@@ -116,68 +199,56 @@ def disk_cached_history(
 
     target_date = _last_business_day()
 
-    # If the existing cache doesn't span far enough back to satisfy
-    # ``min_period``, fall through to a full re-bootstrap (otherwise the
-    # incremental-delta path would happily extend forward but never grow
-    # backward, leaving the cache stuck at its original short window).
+    # Cache too short → full historical bootstrap (fills missing prior days).
     if cached is not None and not cached.empty:
         expected_days = _PERIOD_TO_DAYS.get(min_period, 92)
-        # 0.85 fudge factor: yfinance often returns slightly less than the
-        # nominal period (weekends, holidays, IPO date, etc.).
         required_oldest = target_date - pd.Timedelta(days=int(expected_days * 0.85))
         oldest_cached = cached.index.min().normalize()
         if oldest_cached > required_oldest:
-            try:
-                df = yf.Ticker(symbol).history(period=min_period)
-            except Exception:
-                pass
-            else:
-                df = _strip_tz(df)
-                if df is not None and not df.empty:
-                    try:
-                        df.to_parquet(path)
-                    except Exception:
-                        pass
-                    return df
+            df = _bootstrap_history(symbol, min_period)
+            if df is not None and not df.empty:
+                try:
+                    df.to_parquet(path)
+                except Exception:
+                    pass
+                return df
 
-    # Incremental update path
+    # Warm cache through the last business day; refresh today only in session.
     if cached is not None and not cached.empty:
         last_date = cached.index.max().normalize()
-        if last_date >= target_date:
-            # Today's bar is already cached but changes intraday; also refresh
-            # recent sessions so prior-day closes stay aligned with Yahoo.
-            start = (target_date - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
-        else:
+
+        if last_date < target_date:
+            # Missing prior session(s) — backfill from day after last cached bar.
             start = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        elif last_date >= target_date:
+            if not should_live_refresh(live_fetch):
+                return cached
+            # In market hours: refresh today's bar only.
+            start = target_date.strftime("%Y-%m-%d")
+        else:
+            return cached
+
         try:
             delta = yf.Ticker(symbol).history(start=start)
         except Exception:
-            return cached  # network failure → keep what we had
+            return cached
 
         delta = _strip_tz(delta)
         if delta is None or delta.empty:
-            # Touch the file mtime so "last update attempt" reflects now
             path.touch()
             return cached
 
-        combined = pd.concat([cached, delta])
-        combined = combined[~combined.index.duplicated(keep="last")]
-        combined.sort_index(inplace=True)
+        combined = normalize_daily_ohlcv(pd.concat([cached, delta]))
         try:
             combined.to_parquet(path)
         except Exception:
             pass
         return combined
 
-    # Cold path: initial bootstrap
-    try:
-        df = yf.Ticker(symbol).history(period=min_period)
-    except Exception:
-        return pd.DataFrame()
-
-    df = _strip_tz(df)
+    # Cold path: no cache — bootstrap full history (any time of day).
+    df = _bootstrap_history(symbol, min_period)
     if df is None or df.empty:
-        return pd.DataFrame() if df is None else df
+        return pd.DataFrame()
 
     try:
         df.to_parquet(path)
@@ -205,7 +276,7 @@ def disk_cached_expirations(ticker: str, live_fetch: bool = True) -> list[str]:
         except Exception:
             cached = []
 
-    if not live_fetch:
+    if not live_fetch or not should_live_refresh(live_fetch):
         return cached
 
     try:
@@ -241,7 +312,7 @@ def disk_cached_option_chain(
         _strip_tz(pd.read_parquet(puts_path)) if puts_path.exists() else None
     )
 
-    if not live_fetch:
+    if not live_fetch or not should_live_refresh(live_fetch):
         return (
             cached_calls if cached_calls is not None else pd.DataFrame(),
             cached_puts if cached_puts is not None else pd.DataFrame(),

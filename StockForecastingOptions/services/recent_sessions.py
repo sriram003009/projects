@@ -8,7 +8,7 @@ import pandas as pd
 
 import cache as fcache
 from services.contract_service import ServiceError
-from services.data_access import get_underlying_history
+from services.data_access import data_source_label, get_underlying_history
 from services.messages import cache_miss_message
 from services.serialize import clean_dict
 from services.session_helpers import enrich_current_session_rows
@@ -88,7 +88,7 @@ def get_recent_sessions(
             "sessions_requested": sessions,
             "sessions_returned": len(rows),
             "live_fetch": live_fetch,
-            "data_source": "live" if live_fetch else "cache",
+            "data_source": data_source_label(live_fetch),
             "cache_meta": meta,
             "rows": rows,
         }

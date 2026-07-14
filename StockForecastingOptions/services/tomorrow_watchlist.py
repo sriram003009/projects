@@ -13,6 +13,7 @@ import pandas as pd
 import cache as fcache
 from services import analytics as biz
 from services.contract_service import ServiceError
+from services.data_access import data_source_label
 from services.messages import LIVE_FETCH_HINT
 from services.serialize import clean_dict, df_to_records
 
@@ -138,7 +139,7 @@ def get_watchlist_analysis(live_fetch: bool = False) -> dict[str, Any]:
         {
             "symbols": symbols,
             "live_fetch": live_fetch,
-            "data_source": "live" if live_fetch else "cache",
+            "data_source": data_source_label(live_fetch),
             "cache_hint": cache_hint,
             "rows": display_rows,
             "raw": df_to_records(

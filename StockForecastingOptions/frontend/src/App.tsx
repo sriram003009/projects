@@ -17,6 +17,7 @@ import {
   SpxPivotsTab,
   VixSpySignalTab,
   GexTab,
+  OptionsTrackerTab,
 } from './components/TabPanels'
 import type { ContractForm, ContractLookup } from './types'
 import './App.css'
@@ -26,6 +27,7 @@ const TABS = [
   { id: 'forecast', label: '5-Day Forecasts', row: 1, color: 'tab-orange' },
   { id: 'whatif', label: 'What-If Scenario', row: 1, color: 'tab-purple' },
   { id: 'movers', label: 'Track the Best', row: 1, color: 'tab-green' },
+  { id: 'tracker', label: 'My Calls & Puts', row: 1, color: 'tab-sky' },
   { id: 'weekday', label: 'Weekday Sessions', row: 2, color: 'tab-cyan' },
   { id: 'last20', label: 'Last 20 Days', row: 2, color: 'tab-lime' },
   { id: 'spx', label: 'SPX Pivots', row: 2, color: 'tab-violet' },
@@ -69,7 +71,7 @@ function App() {
       setError(null)
       setSourceNotice(
         form.liveFetch
-          ? 'Live fetch enabled — click Fetch Data to download from Yahoo Finance.'
+          ? 'Live mode — cache-first; today refreshes during US market hours (9:30 AM–4:00 PM ET).'
           : 'Cache-only mode — click Fetch Data to load from disk (no network).',
       )
     }
@@ -140,7 +142,7 @@ function App() {
             scanners, SMA tools, put/call dominance, and cached contracts. Data via Yahoo Finance.
           </p>
           <p className="caption">
-            <strong>Row 1 — Contract:</strong> Recent Activity · 5-Day Forecasts · What-If · Track the Best
+            <strong>Row 1 — Contract:</strong> Recent Activity · 5-Day Forecasts · What-If · Track the Best · My Calls &amp; Puts
             <br />
             <strong>Row 2 — Scanners:</strong> Weekday Sessions · Last 20 Days · SPX Pivots · Stocks on Watchlist · Quick Summary · Check SMA · Calls vs Puts · GEX · VIX → SPY Signal · Cached Data
           </p>
@@ -169,6 +171,7 @@ function App() {
           {activeTab === 'forecast' && <ForecastsTab form={form} contract={contract} />}
           {activeTab === 'whatif' && <WhatIfTab form={form} contract={contract} />}
           {activeTab === 'movers' && <TrackBestTab />}
+          {activeTab === 'tracker' && <OptionsTrackerTab form={form} />}
           {activeTab === 'weekday' && <WeekdaySessionsTab />}
           {activeTab === 'last20' && <Last20DaysTab />}
           {activeTab === 'spx' && <SpxPivotsTab />}
